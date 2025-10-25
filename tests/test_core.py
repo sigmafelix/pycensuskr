@@ -3,7 +3,7 @@ Test suite for pycensuskr package.
 """
 
 from pycensuskr import __version__
-from pycensuskr.core import hello, get_version, CensusData
+from pycensuskr.pycensuskr import hello, get_version, CensusData
 
 
 def test_version():
