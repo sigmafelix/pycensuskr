@@ -6,7 +6,7 @@ import numpy as np
 """
 Main module of pycensuskr.
 
-This module defines all functionalities in tidycensuskr.
+This module defines a core class in tidycensuskr.
 """
 
 class CensusKR:
