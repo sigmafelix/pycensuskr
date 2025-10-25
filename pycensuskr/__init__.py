@@ -8,4 +8,5 @@ __email__ = "geoissong@snu.ac.kr"
 
 # Import main functionality here as the package grows
 # For now, just expose the version
+from .pycensuskr import CensusKR
 __all__ = ["__version__"]

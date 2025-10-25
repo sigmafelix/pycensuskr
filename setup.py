@@ -12,14 +12,15 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="pycensuskr",
-    version="0.1.0",
-    author="Your Name",
-    author_email="your.email@example.com",
+    version="{{VERSION_PLACEHOLDER}}",
+    author="Insang Song",
+    author_email="geoissong@snu.ac.kr",
     description="A Python package for Korean census data processing",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/sigmafelix/pycensuskr",
     packages=find_packages(exclude=["tests", "tests.*"]),
+    package_data={'pycensuskr': ['data/*']},
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
