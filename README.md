@@ -55,52 +55,6 @@ df_tax_2020 = census.anycensus(year = 2020, type = "tax", aggregator = "sum")
 pytest
 ```
 
-### Running tests with coverage
-
-```bash
-pytest --cov=pycensuskr --cov-report=html
-```
-
-### Code formatting
-
-```bash
-black pycensuskr tests
-```
-
-### Linting
-
-```bash
-flake8 pycensuskr tests
-```
-
-### Type checking
-
-```bash
-mypy pycensuskr
-```
-
-## Project Structure
-
-```
-pycensuskr/
-├── pycensuskr/          # Main package directory
-│   ├── __init__.py      # Package initialization
-│   └── core.py          # Core functionality
-├── tests/               # Test directory
-│   ├── __init__.py
-│   └── test_core.py     # Core tests
-├── .gitignore           # Git ignore file
-├── LICENSE              # MIT License
-├── README.md            # This file
-├── pyproject.toml       # Modern Python packaging configuration
-├── setup.py             # Setup script (for compatibility)
-└── requirements-dev.txt # Development dependencies
-```
-
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
