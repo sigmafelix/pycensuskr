@@ -58,6 +58,10 @@ districts_tax_2020.plot("income_labor_mil")
 plt.show()
 ```
 
+## Notes on data updates
+Our data cleaning and processing pipeline is based on the original R package `tidycensuskr`. We periodically synchronize the bundled datasets used in this package with those in R `tidycensuskr` and `tidycensussfkr` to ensure accuracy and relevance. Please refer to the [tidycensuskr webpage](https://github.com/sigmafelix/tidycensuskr) for details on the latest data updates and changes.
+
+
 ## Development
 
 ### Running tests

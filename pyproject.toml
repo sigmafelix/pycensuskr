@@ -4,11 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pycensuskr"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Python package for Korean census data processing"
 readme = "README.md"
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "Insang Song", email = "geoissong@gmail.com"},
+    {name = "Sohyun Park", email = "wherewindstay@gmail.com"},
+    {name = "Sohyun Park", email = "hyesop.shin@auckland.ac.nz"}
+]
+maintainers = [
+    {name = "Insang Song", email = "geoissong@gmail.com"}
 ]
 license = {text = "MIT"}
 classifiers = [
