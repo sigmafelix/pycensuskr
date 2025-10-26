@@ -14,7 +14,7 @@ setup(
     name="pycensuskr",
     version="{{VERSION_PLACEHOLDER}}",
     author="Insang Song",
-    author_email="geoissong@snu.ac.kr",
+    author_email="geoissong@gmail.com",
     description="A Python package for Korean census data processing",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -43,4 +43,5 @@ setup(
             "mypy>=1.0",
         ],
     },
+    include_package_data=True
 )
