@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=45", "wheel"]
+requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -45,7 +45,19 @@ Repository = "https://github.com/sigmafelix/pycensuskr"
 "Bug Tracker" = "https://github.com/sigmafelix/pycensuskr/issues"
 
 [tool.setuptools]
-packages = ["pycensuskr"]
+package-dir = {"" = "."}           # or {"" = "src"} if src/ layout
+include-package-data = true        # <-- wheel includes package_data
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pycensuskr*"]
+
+[tool.setuptools.package-data]
+pycensuskr = ["data/**"]           # <-- wheel side
+
+# (optional, for explicit sdist control)
+[tool.setuptools.exclude-package-data]
+pycensuskr = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -63,5 +75,3 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 
-[tool.setuptools.package-data]
-"*" = ["*.csv"]
