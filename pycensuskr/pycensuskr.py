@@ -11,9 +11,19 @@ This module defines a core class in tidycensuskr.
 
 class CensusKR:
     """
-    A placeholder class for tidycensuskr functionalities.
+    A class for pycensuskr data calls.
 
-    This class can be extended to handle Korean census data tidying.
+    Attributes:
+        gdf (gpd.GeoDataFrame): GeoDataFrame for spatial data.
+        df (pd.DataFrame): DataFrame for tabular data.
+        crosswalk (gpd.GeoDataFrame): Crosswalk boundaries.
+    
+    Methods:
+        load_data(year): Load census data for a specific year.
+        load_districts(year): Load district boundaries for a specific year.
+        anycensus(year, codes, type, level, aggregator, **agg_kwargs): Query census data.
+        create_crosswalkboundary(year1, year2): Create crosswalk boundaries between two years.
+        unify_boundaries(year_standard): Unify census boundaries to a standard year.
     """
 
     def __init__(self):
@@ -32,8 +42,8 @@ class CensusKR:
             str: A message indicating boundary retrieval
         """
         location = os.path.dirname(os.path.realpath(__file__))
-        file_name = os.path.join(location, "data", f"censuskor.csv")
-        df = pd.read_csv(file_name)
+        file_name = os.path.join(location, "data", f"censuskor.parquet")
+        df = pd.read_parquet(file_name)
         dfe = df.loc[df['year'] == year].copy()
         return dfe
     
@@ -62,18 +72,23 @@ class CensusKR:
         **agg_kwargs,
     ):
         """
-        Python equivalent of the R anycensus() using pandas/geopandas.
+        Retrieve census data for specified type of variables in wide format.
+        This method uses the bundled census data, which is limited to certain quintennial years (i.e., 2010, 2015, and 2020).
+        The bundled data includes 54K+ rows and 10 columns.
 
         Parameters:
             year (int): Census year to query.
             codes (list|None): Region codes or names (adm1/adm2). If None, uses all.
-            type (str): One of ["population","housing","tax","mortality","economy"].
+            type (str): One of ["population", "housing", "tax", "mortality", "economy", "medicine",
+    "migration", "environment"].
             level (str): "adm2" or "adm1".
             aggregator (callable|None): Aggregation function (default: numpy.sum).
             **agg_kwargs: Extra kwargs passed to the aggregator where applicable.
 
         Returns:
             pd.DataFrame: Wide-format census table.
+        
+        
         """
 
         if level not in ("adm2", "adm1"):
