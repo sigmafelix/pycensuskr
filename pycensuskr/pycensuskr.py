@@ -11,19 +11,38 @@ This module defines a core class in tidycensuskr.
 
 class CensusKR:
     """
-    A class for pycensuskr data calls.
+    A class for Korean census data retrieval and boundary management.
+
+    This class provides methods to query Korean census data by administrative codes
+    (province or municipality) and year, and to manage district boundaries. It is
+    the Python equivalent of the tidycensuskr R package functionality.
+
+    The class works with bundled census data which is limited to certain quintennial
+    years (2010, 2015, and 2020). The bundled data includes 54K+ rows and 10 columns
+    covering various census types including population, housing, tax, mortality,
+    economy, medicine, migration, and environment data.
 
     Attributes:
         gdf (gpd.GeoDataFrame): GeoDataFrame for spatial data.
         df (pd.DataFrame): DataFrame for tabular data.
-        crosswalk (gpd.GeoDataFrame): Crosswalk boundaries.
-    
+        crosswalk (gpd.GeoDataFrame): Crosswalk boundaries between different years.
+
     Methods:
         load_data(year): Load census data for a specific year.
         load_districts(year): Load district boundaries for a specific year.
-        anycensus(year, codes, type, level, aggregator, **agg_kwargs): Query census data.
-        create_crosswalkboundary(year1, year2): Create crosswalk boundaries between two years.
+        anycensus(year, codes, type, level, aggregator, **agg_kwargs): Query census data
+            by admin code and year.
+        create_crosswalkboundary(year1, year2): Create crosswalk boundaries between
+            two years.
         unify_boundaries(year_standard): Unify census boundaries to a standard year.
+
+    Notes:
+        - Administrative levels: "adm1" (province-level), "adm2" (municipal-level)
+        - Available data types: "population", "housing", "tax", "mortality", "economy",
+          "medicine", "migration", "environment"
+        - Supported years: 2010, 2015, 2020
+        - Data is returned in wide format with separate columns for each class1,
+          class2, and unit combination
     """
 
     def __init__(self):
@@ -69,6 +88,7 @@ class CensusKR:
         type: str = "population",
         level: str = "adm2",
         aggregator=None,
+        geometry=False,
         **agg_kwargs,
     ):
         """
@@ -83,6 +103,7 @@ class CensusKR:
     "migration", "environment"].
             level (str): "adm2" or "adm1".
             aggregator (callable|None): Aggregation function (default: numpy.sum).
+            geometry (bool): Whether to include geometry data (default: False).
             **agg_kwargs: Extra kwargs passed to the aggregator where applicable.
 
         Returns:
@@ -197,6 +218,20 @@ class CensusKR:
                 out = tmp.groupby(group_cols, as_index=False)[num_cols].agg(aggregator, **agg_kwargs)
             else:
                 out = tmp.drop_duplicates(group_cols)
+
+        # Optionally merge geometry
+        if geometry:
+            districts = self.load_districts(year)
+            geo_merge_col = f"{level}_code"
+            if geo_merge_col not in districts.columns:
+                raise KeyError(f"Column '{geo_merge_col}' not found in district boundaries.")
+            out = out.merge(
+                districts[[geo_merge_col, "geometry"]],
+                left_on=f"{level}_code",
+                right_on=geo_merge_col,
+                how="left"
+            )
+            out = gpd.GeoDataFrame(out, geometry="geometry", crs=districts.crs)
 
         return out
 
