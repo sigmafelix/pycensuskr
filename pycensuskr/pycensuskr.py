@@ -47,7 +47,20 @@ class CensusKR:
 
     def __init__(self):
         """
-        Initialize CensusKR.
+        Initialize a new CensusKR instance.
+
+        Creates a new instance of the CensusKR class with empty attributes for
+        storing geodata, tabular data, and crosswalk boundaries. All attributes
+        are initialized as None and will be populated through method calls.
+
+        Attributes initialized:
+            gdf (gpd.GeoDataFrame): Will store GeoDataFrame for spatial data
+            df (pd.DataFrame): Will store DataFrame for tabular census data
+            crosswalk (gpd.GeoDataFrame): Will store crosswalk boundaries between years
+
+        Examples:
+            >>> census = CensusKR()
+            >>> data = census.anycensus(year=2020, type="population")
         """
         self.gdf = None
         self.df = None
@@ -55,10 +68,28 @@ class CensusKR:
 
     def load_data(self, year: int):
         """
-        Get the dataframe data.
+        Load census data for a specific year.
+
+        This method loads the bundled census data from the parquet file for the
+        specified year. The data contains various census metrics organized by
+        administrative regions.
+
+        Parameters:
+            year (int): Census year to load. Must be one of 2010, 2015, or 2020.
 
         Returns:
-            str: A message indicating boundary retrieval
+            pd.DataFrame: A DataFrame containing census data for the specified year,
+                filtered from the complete dataset. Contains columns for year, type,
+                administrative regions (adm1, adm2), codes, classes, units, and values.
+
+        Raises:
+            ValueError: If the specified year is not available in the dataset.
+
+        Notes:
+            - The returned DataFrame is filtered to contain only data for the
+              specified year
+            - Data includes multiple census types (population, housing, tax, etc.)
+            - Administrative codes and names are preserved for both adm1 and adm2 levels
         """
         location = os.path.dirname(os.path.realpath(__file__))
         file_name = os.path.join(location, "data", f"censuskor.parquet")
@@ -68,10 +99,31 @@ class CensusKR:
     
     def load_districts(self, year: int):
         """
-        Load district data.
+        Load district boundaries for a specific year.
+
+        This method loads administrative district boundaries from the bundled
+        GeoPackage file for the specified year. The boundaries are stored as
+        spatial data (sf/GeoDataFrame objects) and can be used for mapping
+        and spatial analysis.
+
+        Parameters:
+            year (int): The year for which to load district boundaries.
+                Must be one of 2010, 2015, or 2020.
 
         Returns:
-            str: A message indicating boundary data loading
+            gpd.GeoDataFrame: A GeoDataFrame containing district boundaries
+                for the specified year, including geometry and administrative
+                codes and names.
+
+        Raises:
+            ValueError: If the specified year is not available.
+            FileNotFoundError: If the boundaries data file is not found.
+
+        Notes:
+            - Returns adm2 (municipal-level) boundaries by default
+            - Boundaries are stored in GeoPackage format with separate layers per year
+            - Each boundary includes administrative codes, names, and geometry
+            - Compatible with spatial operations and mapping libraries
         """
         name_lyr = f"adm2_{year}"
 
@@ -92,24 +144,70 @@ class CensusKR:
         **agg_kwargs,
     ):
         """
-        Retrieve census data for specified type of variables in wide format.
-        This method uses the bundled census data, which is limited to certain quintennial years (i.e., 2010, 2015, and 2020).
-        The bundled data includes 54K+ rows and 10 columns.
+        Query Korean census data by administrative code (province or municipality) and year.
+
+        This method queries the long format census data frame for specific administrative
+        codes (if provided) and returns data in wide format. It is the Python equivalent
+        of the anycensus() function in the tidycensuskr R package.
+
+        The method queries bundled census data which is limited to certain quintennial
+        years (2010, 2015, and 2020). The bundled data includes 54K+ rows and 10 columns
+        covering various demographic, economic, and social indicators.
 
         Parameters:
-            year (int): Census year to query.
-            codes (list|None): Region codes or names (adm1/adm2). If None, uses all.
-            type (str): One of ["population", "housing", "tax", "mortality", "economy", "medicine",
-    "migration", "environment"].
-            level (str): "adm2" or "adm1".
-            aggregator (callable|None): Aggregation function (default: numpy.sum).
-            geometry (bool): Whether to include geometry data (default: False).
-            **agg_kwargs: Extra kwargs passed to the aggregator where applicable.
+            year (int, optional): Census year to query. One of 2010, 2015, or 2020.
+                Defaults to 2020.
+            codes (list or None, optional): Integer list of admin codes (e.g. [11, 26])
+                or character administrative area names (e.g. [\"Seoul\", \"Daejeon\"]).
+                If None, returns all available codes. Defaults to None.
+            type (str, optional): Census data type. One of \"population\", \"housing\",
+                \"tax\", \"economy\", \"medicine\", \"migration\", \"environment\", or
+                \"mortality\". Defaults to \"population\".
+            level (str, optional): Administrative level. \"adm1\" for province-level or
+                \"adm2\" for municipal-level. Defaults to \"adm2\".
+            aggregator (callable or None, optional): Function to aggregate values when
+                level = \"adm1\". Defaults to numpy.sum.
+            geometry (bool, optional): Whether to include spatial geometry data in the
+                result. If True, returns a GeoDataFrame. Defaults to False.
+            **agg_kwargs: Additional arguments passed to the aggregator function
+                (e.g., when using custom aggregation functions).
 
         Returns:
-            pd.DataFrame: Wide-format census table.
-        
-        
+            pd.DataFrame or gpd.GeoDataFrame: A data frame containing census data for
+                the specified codes and year in wide format. If geometry=True, returns
+                a GeoDataFrame with spatial boundaries included.
+
+        Raises:
+            ValueError: If level is not 'adm1' or 'adm2', if mixed types are provided
+                in codes, or if data loading fails.
+            KeyError: If required columns are missing from the data.
+
+        Notes:
+            - Using character strings in codes has a side effect of returning all rows
+              in the dataset that match year and type through prefix matching
+            - The returned table is in wide format with separate columns for each
+              class1, class2, and unit (abbreviated) combination
+            - When level=\"adm1\", adm2 data is aggregated to province level using
+              the specified aggregator function
+            - Column names are cleaned and lowercased in the output
+            - Units are abbreviated to minimum length of 3 characters
+
+        Examples:
+            Query mortality data for administrative code 21 (Busan):
+            >>> census = CensusKR()
+            >>> data = census.anycensus(codes=[21], type=\"mortality\")
+
+            Query population data for Seoul and Daejeon with housing data for 2015:
+            >>> data = census.anycensus(codes=[\"Seoul\", \"Daejeon\"],
+            ...                        type=\"housing\", year=2015)
+
+            Aggregate to province level tax data using sum:
+            >>> data = census.anycensus(codes=[11, 23, 31], type=\"tax\",
+            ...                        year=2020, level=\"adm1\",
+            ...                        aggregator=np.sum)
+
+            Get data with spatial geometry:
+            >>> gdf = census.anycensus(codes=[11], geometry=True)
         """
 
         if level not in ("adm2", "adm1"):
@@ -238,14 +336,45 @@ class CensusKR:
 
     def create_crosswalkboundary(self, year1: int, year2: int):
         """
-        Create the crosswalk boundaries.
+        Create crosswalk boundaries between two different census years.
+
+        This method creates spatial crosswalk boundaries by computing the geometric
+        intersection between district boundaries from two different years. This is
+        useful for analyzing boundary changes over time and for harmonizing data
+        across different administrative boundary systems.
 
         Parameters:
-            year1 (int): The first year for crosswalk
-            year2 (int): The second year for crosswalk
+            year1 (int): The first census year for crosswalk. Must be one of
+                2010, 2015, or 2020.
+            year2 (int): The second census year for crosswalk. Must be one of
+                2010, 2015, or 2020.
 
         Returns:
-            gpd.GeoDataFrame: Crosswalk boundaries
+            gpd.GeoDataFrame: A GeoDataFrame containing the intersected boundaries
+                from both years, with attributes from both time periods. Each polygon
+                represents the spatial intersection between boundaries from year1 and year2.
+
+        Raises:
+            ValueError: If neither year1 nor year2 is provided, or if invalid
+                years are specified.
+            FileNotFoundError: If boundary data is not available for the specified years.
+
+        Warnings:
+            UserWarning: This function performs a computationally intensive geometric
+                intersection operation that may take considerable time to complete,
+                especially for large datasets.
+
+        Notes:
+            - This is a computationally heavy operation that may take significant time
+            - The resulting crosswalk can be used to transfer data between different
+              boundary systems or to analyze boundary changes over time
+            - Each resulting polygon contains attributes from both input years
+            - Useful for temporal analysis and data harmonization across years
+
+        Examples:
+            Create crosswalk between 2015 and 2020 boundaries:
+            >>> census = CensusKR()
+            >>> crosswalk = census.create_crosswalkboundary(2015, 2020)
         """
         # fails if neither year1 nor year2 is populated
         if not year1 and not year2:
@@ -259,10 +388,39 @@ class CensusKR:
 
     def unify_boundaries(self, year_standard: int):
         """
-        Unify the census boundaries.
+        Unify census boundaries to a standard reference year.
+
+        This method harmonizes census boundaries across different years by projecting
+        all data to a common boundary system defined by the standard year. This allows
+        for consistent temporal analysis and comparison of census data across years
+        while maintaining spatial consistency.
+
+        Parameters:
+            year_standard (int): The reference year to use as the standard boundary
+                system. Must be one of 2010, 2015, or 2020.
 
         Returns:
-            gpd.GeoDataFrame 
+            gpd.GeoDataFrame: A unified GeoDataFrame with boundaries standardized
+                to the reference year, allowing for consistent spatial analysis
+                across different time periods.
+
+        Raises:
+            NotImplementedError: This method is not yet implemented.
+            ValueError: If an invalid standard year is provided.
+
+        Notes:
+            - This method is currently not implemented and will raise a
+              NotImplementedError when called
+            - When implemented, it will allow for temporal analysis using consistent
+              boundary definitions
+            - Useful for time-series analysis where boundary changes would otherwise
+              complicate comparisons
+            - The standard year should be chosen based on the analysis requirements
+              and data availability
+
+        Future Implementation:
+            This method will use spatial interpolation and crosswalk boundaries
+            to project data from different years onto a common boundary system.
         """
         raise NotImplementedError
         # return "Census data unified."
