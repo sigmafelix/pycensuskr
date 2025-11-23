@@ -30,6 +30,7 @@ class CensusKR:
     Methods:
         load_data(year): Load census data for a specific year.
         load_districts(year): Load district boundaries for a specific year.
+        convert_basic_adm2(gdf): Convert level 2 boundaries to basic local government boundaries.
         anycensus(year, codes, type, level, aggregator, **agg_kwargs): Query census data
             by admin code and year.
         create_crosswalkboundary(year1, year2): Create crosswalk boundaries between
@@ -66,7 +67,7 @@ class CensusKR:
         self.df = None
         self.crosswalk = None
 
-    def load_data(self, year: int):
+    def load_data(self, year: int) -> pd.DataFrame:
         """
         Load census data for a specific year.
 
@@ -97,7 +98,7 @@ class CensusKR:
         dfe = df.loc[df['year'] == year].copy()
         return dfe
     
-    def load_districts(self, year: int):
+    def load_districts(self, year: int) -> gpd.GeoDataFrame:
         """
         Load district boundaries for a specific year.
 
@@ -131,8 +132,36 @@ class CensusKR:
         path_bound = os.path.join(location, "data", "boundaries.gpkg")
         districts = gpd.read_file(path_bound, layer = name_lyr)
         return districts
-        
+    
+    def convert_basic_adm2(self, gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """
+        Convert pycensuskr standard level 2 administrative boundaries to basic local government boundaries.
 
+        This method dissolves the level 2 administrative GeoDataFrame to
+        a basic local government boundary GeoDataFrame by eliminating sub-levels
+        in some municipalities. It standardizes the GeoDataFrame
+        by ensuring adm2_code will contain five digits with ending "0".
+        The geometry column is preserved and the boundaries are dissolved
+        accordingly.
+
+        Parameters:
+            gdf (gpd.GeoDataFrame): Input GeoDataFrame containing district boundaries.
+
+        Returns:
+            gpd.GeoDataFrame: A converted GeoDataFrame.
+        """
+        gdf_conv = gdf.copy()
+        # Ensure adm2_code is string
+        gdf_conv["adm2_code"] = gdf_conv["adm2_code"].astype(str)
+        # Create basic adm2_code by replacing last digit with "0"
+        gdf_conv["adm2_code_basic"] = gdf_conv["adm2_code"].str[:-1] + "0"
+        # Dissolve by basic adm2_code
+        gdf_basic = gdf_conv.dissolve(by="adm2_code_basic", as_index=False)
+        # Update adm2_code and adm2 columns
+        gdf_basic["adm2_code"] = gdf_basic["adm2_code_basic"]
+        gdf_basic = gdf_basic.drop(columns=["adm2_code_basic"])
+        return gdf_basic
+            
     def anycensus(
         self,
         year: int = 2020,
