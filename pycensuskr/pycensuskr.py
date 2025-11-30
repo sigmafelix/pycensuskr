@@ -165,10 +165,10 @@ class CensusKR:
     def anycensus(
         self,
         year: int = 2020,
-        codes=None,
+        codes: list = [],
         type: str = "population",
         level: str = "adm2",
-        aggregator=None,
+        aggregator = np.sum,
         geometry=False,
         **agg_kwargs,
     ):
@@ -186,15 +186,15 @@ class CensusKR:
         Parameters:
             year (int, optional): Census year to query. One of 2010, 2015, or 2020.
                 Defaults to 2020.
-            codes (list or None, optional): Integer list of admin codes (e.g. [11, 26])
+            codes (list, optional): Integer list of admin codes (e.g. [11, 26])
                 or character administrative area names (e.g. [\"Seoul\", \"Daejeon\"]).
-                If None, returns all available codes. Defaults to None.
+                If None, returns all available codes. Defaults to an empty list.
             type (str, optional): Census data type. One of \"population\", \"housing\",
                 \"tax\", \"economy\", \"medicine\", \"migration\", \"environment\", or
                 \"mortality\". Defaults to \"population\".
             level (str, optional): Administrative level. \"adm1\" for province-level or
                 \"adm2\" for municipal-level. Defaults to \"adm2\".
-            aggregator (callable or None, optional): Function to aggregate values when
+            aggregator (callable, optional): Function to aggregate values when
                 level = \"adm1\". Defaults to numpy.sum.
             geometry (bool, optional): Whether to include spatial geometry data in the
                 result. If True, returns a GeoDataFrame. Defaults to False.
@@ -280,27 +280,30 @@ class CensusKR:
         query_col = f"{level}_code" if is_int_code else level
 
         # Default codes: all admx codes used
-        if codes is None:
-            if query_col not in df_year_type.columns:
-                raise KeyError(f"Column '{query_col}' not found in data.")
-            codes = df_year_type[query_col].dropna().astype(str).unique().tolist()
+        if isinstance(codes, list):
+            if len(codes) == 0:
+                if query_col not in df_year_type.columns:
+                    raise KeyError(f"Column '{query_col}' not found in data.")
+                codes = df_year_type[query_col].dropna().astype(str).unique().tolist()
+            else:
+                codes = [str(c) for c in codes]
+                # If codes are names and level is adm2, try searching adm1 names first
+                if not is_int_code and level == "adm2":
+                    def strip_space(s): return re.sub(r"\s+", "", str(s))
+                    patt = re.compile(r"^(%s)" % "|".join(re.escape(c) for c in codes))
+                    matched_adm1 = []
+                    if "adm1" in df_year_type.columns:
+                        mask_adm1 = df_year_type["adm1"].map(strip_space).str.match(patt)
+                        matched_adm1 = df_year_type.loc[mask_adm1, "adm1"].dropna().unique().tolist()
+                    if len(matched_adm1) == 0 and "adm2" in df_year_type.columns:
+                        mask_adm2 = df_year_type["adm2"].map(strip_space).str.match(patt)
+                        matched_adm2 = df_year_type.loc[mask_adm2, "adm2"].dropna().unique().tolist()
+                        codes = matched_adm2
+                    else:
+                        codes = matched_adm1
+                        query_col = "adm1"
         else:
-            codes = [str(c) for c in codes]
-            # If codes are names and level is adm2, try searching adm1 names first
-            if not is_int_code and level == "adm2":
-                def strip_space(s): return re.sub(r"\s+", "", str(s))
-                patt = re.compile(r"^(%s)" % "|".join(re.escape(c) for c in codes))
-                matched_adm1 = []
-                if "adm1" in df_year_type.columns:
-                    mask_adm1 = df_year_type["adm1"].map(strip_space).str.match(patt)
-                    matched_adm1 = df_year_type.loc[mask_adm1, "adm1"].dropna().unique().tolist()
-                if len(matched_adm1) == 0 and "adm2" in df_year_type.columns:
-                    mask_adm2 = df_year_type["adm2"].map(strip_space).str.match(patt)
-                    matched_adm2 = df_year_type.loc[mask_adm2, "adm2"].dropna().unique().tolist()
-                    codes = matched_adm2
-                else:
-                    codes = matched_adm1
-                    query_col = "adm1"
+            raise ValueError("'codes' must be a list of integers or strings.")
 
         # Apply codes filter (prefix match OR exact membership)
         def strip_space(s): return re.sub(r"\s+", "", str(s))
@@ -454,6 +457,3 @@ class CensusKR:
         raise NotImplementedError
         # return "Census data unified."
     
-
-
-
