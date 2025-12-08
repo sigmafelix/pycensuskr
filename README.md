@@ -1,8 +1,14 @@
 # pycensuskr
 
-A Python package template for Korean census data processing.
+A Python package for Korean district-level census and geographic data.
 
 ## Installation
+
+### PyPI
+
+```bash
+pip install pycensuskr
+```
 
 ### From source
 
