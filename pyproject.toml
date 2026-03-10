@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pycensuskr"
-version = "0.2.6"
+version = "0.2.7"
 description = "A Python package for Korean census data processing"
 readme = "README.md"
 authors = [
