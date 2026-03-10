@@ -1,5 +1,7 @@
 # pycensuskr
 
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/sigmafelix/pycensuskr/HEAD?urlpath=%2Fdoc%2Ftree%2Fexamples%2Fpycensuskr_example.ipynb)
+
 A Python package for Korean district-level census and geographic data.
 
 ## Installation
