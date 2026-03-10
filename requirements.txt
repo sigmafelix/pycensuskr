@@ -4,4 +4,3 @@ geopandas>=1.0.0
 scikit-learn>=1.7.0
 arrow>=1.3.0
 matplotlib>=3.10.0
-pycensuskr>=0.2.5

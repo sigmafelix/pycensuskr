@@ -12,7 +12,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="pycensuskr",
-    version="{{VERSION_PLACEHOLDER}}",
+    version="0.2.7",
     author="Insang Song",
     author_email="geoissong@gmail.com",
     description="A Python package for Korean census data processing",
@@ -33,7 +33,14 @@ setup(
         "Programming Language :: Python :: 3.12",
     ],
     python_requires=">=3.8",
-    install_requires=[],
+    install_requires=[
+        "numpy>=2.2.2",
+        "pandas>=2.3.0",
+        "geopandas>=1.0.0",
+        "scikit-learn>=1.7.0",
+        "arrow>=1.3.0",
+        "matplotlib>=3.10.0"
+    ],
     extras_require={
         "dev": [
             "pytest>=7.0",
