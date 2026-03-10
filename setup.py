@@ -39,7 +39,9 @@ setup(
         "geopandas>=1.0.0",
         "scikit-learn>=1.7.0",
         "arrow>=1.3.0",
-        "matplotlib>=3.10.0"
+        "matplotlib>=3.10.0",
+        "pyarrow>=20.0.0",
+        "fastparquet>=2024.11.0"
     ],
     extras_require={
         "dev": [
