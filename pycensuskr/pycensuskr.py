@@ -3,6 +3,7 @@ import geopandas as gpd
 import os
 import re
 import numpy as np
+import warnings
 """
 Main module of pycensuskr.
 
@@ -456,4 +457,69 @@ class CensusKR:
         """
         raise NotImplementedError
         # return "Census data unified."
-    
+
+    def detect_adm2_type(
+        self,
+        df: pd.DataFrame,
+        year: int | None = None,
+        mode: str = "non",
+        adm2_code: str = "adm2_code",
+    ) -> pd.DataFrame:
+        """
+        Detect adm2 code type and return exact autonomous/non-autonomous rows.
+
+        The adm2 code may include both autonomous Gu codes (ending with "0") and
+        non-autonomous Gu codes (ending with non-zero digit). This method detects
+        code type from ``adm2_code`` and returns rows according to ``mode``.
+
+        Parameters:
+            df (pd.DataFrame): Input census table.
+            year (int | None): Optional year filter.
+            mode (str): "atn" for autonomous or "non" for non-autonomous.
+            adm2_code (str): Column name containing adm2 codes.
+
+        Returns:
+            pd.DataFrame: Filtered table with exact adm2 code type.
+
+        Raises:
+            ValueError: If ``mode`` is not one of "atn" or "non".
+            KeyError: If required columns are missing.
+        """
+        if mode not in ("atn", "non"):
+            raise ValueError("mode must be 'atn' or 'non'")
+
+        if adm2_code not in df.columns:
+            raise KeyError(f"Column '{adm2_code}' not found in data.")
+
+        dfe = df.copy()
+        if year is not None:
+            if "year" not in dfe.columns:
+                raise KeyError("Column 'year' not found in data.")
+            dfe = dfe.loc[dfe["year"] == year].copy()
+
+        code_series = dfe[adm2_code].astype(str)
+        adm2_nonauto_flag = code_series.str[-1] != "0"
+
+        if adm2_nonauto_flag.any():
+            adm2_nonauto = pd.Series(code_series.loc[adm2_nonauto_flag].unique())
+            adm2_nonauto_upper = adm2_nonauto.str[:4]
+            adm2_nonauto_upper_str = adm2_nonauto_upper + "0"
+
+            adm2_auto = dfe.loc[code_series.isin(adm2_nonauto_upper_str)]
+            adm2_auto_upper = pd.Series(adm2_auto[adm2_code].astype(str).unique()).str[:4]
+            adm2_auto_upper_str = adm2_auto_upper + "0"
+
+            if mode == "atn":
+                return dfe.loc[~adm2_nonauto_flag].copy()
+
+            auto_nonauto_cond = adm2_nonauto_upper.isin(adm2_auto_upper)
+            if not auto_nonauto_cond.all():
+                warnings.warn(
+                    "Inconsistent codes: Some non-autonomous Gu codes do not have "
+                    "corresponding upper level administrative codes.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            return dfe.loc[~code_series.isin(adm2_auto_upper_str)].copy()
+
+        return dfe
