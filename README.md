@@ -34,23 +34,19 @@ pip install -e ".[dev]"
 ## Usage
 
 ```python
-from pycensuskr import __version__
 from pycensuskr import CensusKR
 from matplotlib import pyplot as plt
 import geopandas as gpd
-
-# Print version
-print(__version__)
 
 # Create a CensusData instance
 census = CensusKR()
 
 # load specific year data
-data_2020 = census.load_data(2020)
+data_2020 = census.load_data(year = 2020)
 print(data_2020)
 
 # load district boundaries for a specific year
-districts_2020 = census.load_districts(2020)
+districts_2020 = census.load_districts(year = 2020)
 districts_2020["adm2_re"] = districts_2020["adm2_code"].astype(str).str.slice(0,4)
 # aggregate geometries by adm2_re
 districts_2020 = districts_2020.dissolve(by="adm2_re", as_index=False)
