@@ -63,6 +63,19 @@ districts_tax_2020.plot("income_labor_mil")
 plt.show()
 ```
 
+## Filter non-/autonomous district codes
+```python
+from pycensuskr import CensusKR
+
+# Create a CensusData instance
+census = CensusKR()
+
+# load population data
+pop20 = census.anycensus(year=2020, type="population")
+pop20_nonauto = census.detect_adm2_type(df=pop20, mode="non")
+```
+
+
 ## Notes on data updates
 Our data cleaning and processing pipeline is based on the original R package `tidycensuskr`. We periodically synchronize the bundled datasets used in this package with those in R `tidycensuskr` and `tidycensussfkr` to ensure accuracy and relevance. Please refer to the [tidycensuskr webpage](https://github.com/sigmafelix/tidycensuskr) for details on the latest data updates and changes.
 
