@@ -79,6 +79,13 @@ pop20_nonauto = census.detect_adm2_type(df=pop20, mode="non")
 ## Notes on data updates
 Our data cleaning and processing pipeline is based on the original R package `tidycensuskr`. We periodically synchronize the bundled datasets used in this package with those in R `tidycensuskr` and `tidycensussfkr` to ensure accuracy and relevance. Please refer to the [tidycensuskr webpage](https://github.com/sigmafelix/tidycensuskr) for details on the latest data updates and changes.
 
+## Data license disclaimer
+
+* The data is provided under the [Korea Open Government License Type 1 (Attribution)](https://www.kogl.or.kr/info/license.do) (Note: in Korean). Each raw data table is available for download from the [Public Data Portal](https://www.data.go.kr/) and [KOSIS](https://kosis.kr/) with no cost.
+
+![](resources/kogl_type1.jpg){style="fig-align: center; width: 200px;"}
+
+
 
 ## Development
 

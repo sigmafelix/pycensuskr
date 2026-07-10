@@ -68,35 +68,38 @@ class CensusKR:
         self.df = None
         self.crosswalk = None
 
-    def load_data(self, year: int) -> pd.DataFrame:
+    def load_data(self, year) -> pd.DataFrame:
         """
-        Load census data for a specific year.
+        Load census data for one or more years.
 
         This method loads the bundled census data from the parquet file for the
-        specified year. The data contains various census metrics organized by
+        specified year(s). The data contains various census metrics organized by
         administrative regions.
 
         Parameters:
-            year (int): Census year to load. Must be one of 2010, 2015, or 2020.
+            year (int or list): Census year(s) to load. Each must be one of
+                2010, 2015, or 2020. A single int or a list/tuple of ints.
 
         Returns:
-            pd.DataFrame: A DataFrame containing census data for the specified year,
-                filtered from the complete dataset. Contains columns for year, type,
-                administrative regions (adm1, adm2), codes, classes, units, and values.
+            pd.DataFrame: A DataFrame containing census data for the specified
+                year(s), filtered from the complete dataset. Contains columns for
+                year, type, administrative regions (adm1, adm2), codes, classes,
+                units, and values.
 
         Raises:
             ValueError: If the specified year is not available in the dataset.
 
         Notes:
             - The returned DataFrame is filtered to contain only data for the
-              specified year
+              specified year(s)
             - Data includes multiple census types (population, housing, tax, etc.)
             - Administrative codes and names are preserved for both adm1 and adm2 levels
         """
+        years = year if isinstance(year, (list, tuple, set)) else [year]
         location = os.path.dirname(os.path.realpath(__file__))
         file_name = os.path.join(location, "data", f"censuskor.parquet")
         df = pd.read_parquet(file_name)
-        dfe = df.loc[df['year'] == year].copy()
+        dfe = df.loc[df['year'].isin(years)].copy()
         return dfe
     
     def load_districts(self, year: int) -> gpd.GeoDataFrame:
@@ -165,11 +168,14 @@ class CensusKR:
             
     def anycensus(
         self,
-        year: int = 2020,
+        year=2020,
         codes: list = [],
         type: str = "population",
         level: str = "adm2",
+        adm2_type: str = "all",
         aggregator = np.sum,
+        weight_type=None,
+        weight_column=None,
         geometry=False,
         **agg_kwargs,
     ):
@@ -185,18 +191,41 @@ class CensusKR:
         covering various demographic, economic, and social indicators.
 
         Parameters:
-            year (int, optional): Census year to query. One of 2010, 2015, or 2020.
-                Defaults to 2020.
+            year (int or list, optional): Census year(s) to query. Each one of
+                2010, 2015, or 2020. Accepts a single int or a list/tuple of ints
+                to query multiple years at once. Defaults to 2020.
             codes (list, optional): Integer list of admin codes (e.g. [11, 26])
                 or character administrative area names (e.g. [\"Seoul\", \"Daejeon\"]).
                 If None, returns all available codes. Defaults to an empty list.
-            type (str, optional): Census data type. One of \"population\", \"housing\",
-                \"tax\", \"economy\", \"medicine\", \"migration\", \"environment\", or
-                \"mortality\". Defaults to \"population\".
+            type (str or list, optional): Census data type(s). Each one of
+                \"population\", \"housing\", \"tax\", \"economy\", \"medicine\",
+                \"migration\", \"environment\", or \"mortality\". Accepts a single
+                string or a list/tuple of strings to query multiple types at once.
+                Defaults to \"population\".
             level (str, optional): Administrative level. \"adm1\" for province-level or
                 \"adm2\" for municipal-level. Defaults to \"adm2\".
+            adm2_type (str, optional): Which municipal code type to keep before
+                returning adm2 results or aggregating to adm1. \"all\" keeps the
+                data as queried, \"atn\" keeps autonomous/basic local government
+                rows, and \"non\" keeps non-autonomous rows where available. For
+                weighted aggregation with \"atn\", autonomous/basic local government
+                rate rows are recalculated from their non-autonomous component rows
+                using the supplied weights before being returned or aggregated to
+                adm1. Defaults to \"all\".
             aggregator (callable, optional): Function to aggregate values when
-                level = \"adm1\". Defaults to numpy.sum.
+                level = \"adm1\" or when weighted adm2_type=\"atn\" recalculates
+                autonomous/basic local government rows. Defaults to numpy.sum.
+                When weight_type or weight_column is supplied, aggregator must
+                accept a `weights` keyword argument (e.g. a wrapper around
+                numpy.average).
+            weight_type (str, optional): Census data type used to supply weights
+                when aggregating (e.g. rate variables in type=\"mortality\" can be
+                weighted by population counts from weight_type=\"population\").
+                Defaults to None (no separate weight query; weight_column must
+                already exist in the queried type's own data).
+            weight_column (str, optional): Column name used as weights when
+                aggregating. If weight_type=\"population\" and weight_column is
+                omitted, \"all households_total_per\" is used. Defaults to None.
             geometry (bool, optional): Whether to include spatial geometry data in the
                 result. If True, returns a GeoDataFrame. Defaults to False.
             **agg_kwargs: Additional arguments passed to the aggregator function
@@ -208,9 +237,12 @@ class CensusKR:
                 a GeoDataFrame with spatial boundaries included.
 
         Raises:
-            ValueError: If level is not 'adm1' or 'adm2', if mixed types are provided
-                in codes, or if data loading fails.
-            KeyError: If required columns are missing from the data.
+            ValueError: If level is not 'adm1' or 'adm2', if adm2_type is not 'all',
+                'atn', or 'non', if mixed types are provided in codes, if weighted
+                adm2-level computation is requested without adm2_type='atn', or if
+                data loading fails.
+            KeyError: If required columns (including the weight column) are missing
+                from the data.
 
         Notes:
             - Using character strings in codes has a side effect of returning all rows
@@ -219,6 +251,8 @@ class CensusKR:
               class1, class2, and unit (abbreviated) combination
             - When level=\"adm1\", adm2 data is aggregated to province level using
               the specified aggregator function
+            - Weighted adm2-level computation (weight_type or weight_column supplied)
+              is only available when adm2_type=\"atn\"
             - Column names are cleaned and lowercased in the output
             - Units are abbreviated to minimum length of 3 characters
 
@@ -238,29 +272,72 @@ class CensusKR:
 
             Get data with spatial geometry:
             >>> gdf = census.anycensus(codes=[11], geometry=True)
+
+            Query population data for multiple years at once:
+            >>> data = census.anycensus(codes=[11], year=[2010, 2015, 2020])
+
+            Aggregate mortality rates to adm1 using population weights:
+            >>> def weighted_mean(x, weights, **kw):
+            ...     return np.average(x, weights=weights)
+            >>> data = census.anycensus(codes=[\"Seoul\"], type=\"mortality\",
+            ...                        year=2020, level=\"adm1\",
+            ...                        aggregator=weighted_mean,
+            ...                        weight_type=\"population\")
+
+            Recalculate adm2 rates after cleaning to autonomous/basic local governments:
+            >>> data = census.anycensus(codes=[\"Gyeonggi-do\"], type=\"mortality\",
+            ...                        year=2020, level=\"adm2\", adm2_type=\"atn\",
+            ...                        aggregator=weighted_mean,
+            ...                        weight_type=\"population\")
+
+            Query multiple census types at once:
+            >>> data = census.anycensus(codes=[11], type=["population", "housing"])
         """
 
         if level not in ("adm2", "adm1"):
             raise ValueError("level must be 'adm2' or 'adm1'")
 
+        if adm2_type not in ("all", "atn", "non"):
+            raise ValueError("adm2_type must be 'all', 'atn', or 'non'")
+
         # Default aggregator
         aggregator = aggregator or np.sum
 
-        # Load data for the requested year
-        df = self.load_data(year)
+        # Normalize year and type to lists so single and multiple values share one code path
+        years = list(year) if isinstance(year, (list, tuple, set)) else [year]
+        types = list(type) if isinstance(type, (list, tuple, set)) else [type]
+
+        has_weighting = weight_type is not None or weight_column is not None
+        if level == "adm2" and has_weighting and adm2_type != "atn":
+            raise ValueError("Weighted adm2 computation is only available when adm2_type='atn'.")
+        if has_weighting and weight_column is None:
+            if weight_type == "population":
+                weight_column = "all households_total_per"
+            else:
+                raise ValueError("'weight_column' must be supplied when weighted aggregation is requested.")
+
+        # Load data for the requested year(s)
+        df = self.load_data(years)
         if df is None or not isinstance(df, pd.DataFrame):
             raise ValueError("Failed to load census data. Ensure load_data(year) returns a DataFrame.")
 
         # Filter by year and type (create columns if not present)
         if "year" in df.columns:
-            df_year_type = df[(df["year"] == year) & (df["type"] == type)] if "type" in df.columns else df[df["year"] == year].copy()
+            year_mask = df["year"].isin(years)
+            df_year_type = df[year_mask & (df["type"].isin(types))] if "type" in df.columns else df[year_mask].copy()
         else:
             df_year_type = df.copy()
-            df_year_type["year"] = year
-            if "type" not in df_year_type.columns:
-                df_year_type["type"] = type
+            if len(years) == 1:
+                df_year_type["year"] = years[0]
             else:
-                df_year_type = df_year_type[df_year_type["type"] == type]
+                raise ValueError("Multiple years requested but data has no 'year' column to filter on.")
+            if "type" not in df_year_type.columns:
+                if len(types) == 1:
+                    df_year_type["type"] = types[0]
+                else:
+                    raise ValueError("Multiple types requested but data has no 'type' column to filter on.")
+            else:
+                df_year_type = df_year_type[df_year_type["type"].isin(types)]
 
         # Determine if 'codes' are integers
         is_int_code = all(isinstance(c, (int, np.integer)) for c in (codes or []))
@@ -326,12 +403,15 @@ class CensusKR:
                 dfe["unit"].astype(str)
             )
             index_cols = [c for c in ["year", "type", "adm1", "adm1_code", "adm2", "adm2_code"] if c in dfe.columns]
+            # Collapses raw duplicate (year, type, adm1, adm2, class1, class2, unit) rows,
+            # which do occur in the bundled data. Always sums rather than reusing the
+            # user-supplied 'aggregator', since that may require a 'weights' kwarg meant
+            # for the level="adm1"/weighted adm2 aggregation stages below, not this reshape.
             out = dfe.pivot_table(
                 index=index_cols,
                 columns="__colname__",
                 values="value",
-                aggfunc=aggregator,
-                **agg_kwargs
+                aggfunc=np.sum,
             ).reset_index()
             # Clean column names
             out.columns = [str(c).lower().replace("_na", "") for c in out.columns]
@@ -339,32 +419,261 @@ class CensusKR:
             out = dfe
             out.columns = [str(c).lower().replace("_na", "") for c in out.columns]
 
+        # Non-weighted adm2_type filtering (weighted 'atn' is handled via
+        # weighted collapsing below, since it recalculates rather than drops rows)
+        if adm2_type == "non" or (adm2_type == "atn" and not has_weighting):
+            out = self.detect_adm2_type(out, mode=adm2_type)
+
+        # Weighted adm2-level recalculation: fold non-autonomous rows into their
+        # autonomous/basic local government parent using weighted aggregation
+        if level == "adm2" and has_weighting:
+            out = self._apply_weighted_adm2(
+                out, years, types, codes, weight_type, weight_column, aggregator, agg_kwargs
+            )
+
         # If level is adm1, aggregate adm2 to adm1
         if level == "adm1":
-            cols_to_drop = [c for c in ["adm2", "adm2_code"] if c in out.columns]
-            tmp = out.drop(columns=cols_to_drop, errors="ignore")
-            group_cols = [c for c in ["year", "type", "adm1", "adm1_code"] if c in tmp.columns]
-            num_cols = tmp.select_dtypes(include=["number"]).columns.tolist()
-            if num_cols:
-                out = tmp.groupby(group_cols, as_index=False)[num_cols].agg(aggregator, **agg_kwargs)
+            if has_weighting:
+                out = self._aggregate_adm1_weighted(
+                    out, years, types, codes, adm2_type, weight_type, weight_column,
+                    aggregator, agg_kwargs
+                )
             else:
-                out = tmp.drop_duplicates(group_cols)
+                cols_to_drop = [c for c in ["adm2", "adm2_code"] if c in out.columns]
+                tmp = out.drop(columns=cols_to_drop, errors="ignore")
+                group_cols = [c for c in ["year", "type", "adm1", "adm1_code"] if c in tmp.columns]
+                num_cols = [c for c in tmp.select_dtypes(include=["number"]).columns if c not in group_cols]
+                if num_cols:
+                    out = tmp.groupby(group_cols, as_index=False)[num_cols].agg(aggregator, **agg_kwargs)
+                else:
+                    out = tmp.drop_duplicates(group_cols)
 
         # Optionally merge geometry
         if geometry:
-            districts = self.load_districts(year)
             geo_merge_col = f"{level}_code"
-            if geo_merge_col not in districts.columns:
-                raise KeyError(f"Column '{geo_merge_col}' not found in district boundaries.")
-            out = out.merge(
-                districts[[geo_merge_col, "geometry"]],
-                left_on=f"{level}_code",
-                right_on=geo_merge_col,
-                how="left"
-            )
+            frames = []
+            districts = None
+            for yr in years:
+                districts = self.load_districts(yr)
+                if geo_merge_col not in districts.columns:
+                    raise KeyError(f"Column '{geo_merge_col}' not found in district boundaries.")
+                out_yr = out[out["year"] == yr] if "year" in out.columns else out
+                merged = out_yr.merge(
+                    districts[[geo_merge_col, "geometry"]],
+                    left_on=f"{level}_code",
+                    right_on=geo_merge_col,
+                    how="left"
+                )
+                frames.append(merged)
+            out = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
             out = gpd.GeoDataFrame(out, geometry="geometry", crs=districts.crs)
 
         return out
+
+    @staticmethod
+    def _call_weighted_aggregator(aggregator, values, weights, agg_kwargs):
+        """Call aggregator(values, weights=weights, **agg_kwargs) with a clear error
+        if aggregator doesn't accept a 'weights' keyword (e.g. the default np.sum)."""
+        try:
+            return aggregator(values, weights=weights, **agg_kwargs)
+        except TypeError as exc:
+            if "weights" in str(exc):
+                raise ValueError(
+                    "'aggregator' must accept a 'weights' keyword argument when "
+                    "weight_type or weight_column is supplied (the default, "
+                    "np.sum, does not). Example: "
+                    "lambda x, weights, **kw: np.average(x, weights=weights)"
+                ) from exc
+            raise
+
+    def _resolve_weight_pool(
+        self, out, years, codes, types, weight_type, weight_column, adm2_type
+    ):
+        """
+        Resolve the adm2-level data used as the source of aggregation weights.
+
+        If ``weight_type`` names one of the types already present in ``out``,
+        that slice of ``out`` is reused. Otherwise a separate adm2-level query
+        is issued for ``weight_type`` over the same years and codes.
+
+        Returns None if ``weight_type`` is None (meaning ``weight_column`` is
+        expected to already live inside each type's own data).
+        """
+        if weight_type is None:
+            return None
+        if weight_type in types:
+            pool = out[out["type"] == weight_type] if "type" in out.columns else out
+        else:
+            pool = self.anycensus(
+                year=years, codes=codes, type=weight_type, level="adm2",
+                adm2_type=adm2_type, geometry=False,
+            )
+        if weight_column not in pool.columns:
+            raise KeyError(
+                f"Weight column '{weight_column}' was not found in the '{weight_type}' query output."
+            )
+        return pool
+
+    def _collapse_weighted_adm2_to_atn(self, df, weight_df, weight_column, aggregator, agg_kwargs):
+        """
+        Recalculate autonomous/basic local government adm2 rows from their
+        non-autonomous component rows using weighted aggregation.
+
+        Rows whose adm2_code is already autonomous (or has no non-autonomous
+        children) are kept as-is. Rows whose adm2_code is non-autonomous and
+        whose parent (first 4 digits + "0") is present among the autonomous
+        rows are folded into that parent using ``aggregator(values, weights=w,
+        **agg_kwargs)`` for every value column, and the parent's weight column
+        is recomputed as the sum of the children's weights.
+
+        Returns a tuple of (collapsed data, collapsed weights) where the
+        latter is a two-column (adm2_code, weight_column) frame.
+        """
+        adm2_code = "adm2_code"
+        exclude = {"year", "adm1", "adm1_code", "adm2", "adm2_code", "type", weight_column}
+        value_columns = [c for c in df.columns if c not in exclude]
+
+        atn_df = self.detect_adm2_type(df, mode="atn").reset_index(drop=True)
+        atn_weight_df = self.detect_adm2_type(weight_df, mode="atn").reset_index(drop=True)
+        atn_df[adm2_code] = atn_df[adm2_code].astype(str)
+        atn_weight_df[adm2_code] = atn_weight_df[adm2_code].astype(str)
+
+        code_chr = df[adm2_code].astype(str)
+        parent_code = code_chr.str[:4] + "0"
+        nonauto = code_chr.str[-1] != "0"
+        parent_has_atn = parent_code.isin(atn_df[adm2_code])
+        nonauto_df = df.loc[(nonauto & parent_has_atn).to_numpy()].copy()
+
+        if nonauto_df.empty:
+            return atn_df, atn_weight_df[[adm2_code, weight_column]].copy()
+
+        weight_values = weight_df[[adm2_code, weight_column]].copy()
+        weight_values[adm2_code] = weight_values[adm2_code].astype(str)
+        weight_values = weight_values.rename(columns={weight_column: "_aggregation_weight"})
+        nonauto_df[adm2_code] = nonauto_df[adm2_code].astype(str)
+        nonauto_df = nonauto_df.merge(weight_values, on=adm2_code, how="left")
+        nonauto_df["_parent_adm2_code"] = nonauto_df[adm2_code].str[:4] + "0"
+
+        for parent, group in nonauto_df.groupby("_parent_adm2_code"):
+            idx = atn_df.index[atn_df[adm2_code] == parent]
+            if len(idx) == 0:
+                continue
+            i = idx[0]
+            w = group["_aggregation_weight"].to_numpy()
+            for column in value_columns:
+                atn_df.loc[i, column] = self._call_weighted_aggregator(
+                    aggregator, group[column].to_numpy(), w, agg_kwargs
+                )
+
+        weight_code_chr = weight_df[adm2_code].astype(str)
+        weight_parent_code = weight_code_chr.str[:4] + "0"
+        weight_nonauto = weight_code_chr.str[-1] != "0"
+        weight_parent_has_atn = weight_parent_code.isin(atn_weight_df[adm2_code])
+        nonauto_weight_df = weight_df.loc[(weight_nonauto & weight_parent_has_atn).to_numpy()].copy()
+
+        collapsed_weights = atn_weight_df[[adm2_code, weight_column]].copy()
+        if not nonauto_weight_df.empty:
+            nonauto_weight_df[adm2_code] = nonauto_weight_df[adm2_code].astype(str)
+            nonauto_weight_df["_parent_adm2_code"] = nonauto_weight_df[adm2_code].str[:4] + "0"
+            sums = nonauto_weight_df.groupby("_parent_adm2_code")[weight_column].sum(min_count=1)
+            codes_str = collapsed_weights[adm2_code]
+            mask = codes_str.isin(sums.index)
+            collapsed_weights.loc[mask, weight_column] = codes_str[mask].map(sums).to_numpy()
+
+        return atn_df, collapsed_weights
+
+    def _apply_weighted_adm2(
+        self, out, years, types, codes, weight_type, weight_column, aggregator, agg_kwargs
+    ):
+        """Recalculate adm2_type='atn' rows for a weighted adm2-level query."""
+        weight_pool = self._resolve_weight_pool(
+            out, years, codes, types, weight_type, weight_column, adm2_type="all"
+        )
+
+        group_keys = [c for c in ["year", "type"] if c in out.columns]
+        iterator = out.groupby(group_keys) if group_keys else [((), out)]
+        frames = []
+        for key, sub in iterator:
+            key_vals = key if isinstance(key, tuple) else (key,)
+            key_map = dict(zip(group_keys, key_vals))
+            if weight_pool is not None:
+                w_sub = weight_pool
+                if "year" in key_map and "year" in w_sub.columns:
+                    w_sub = w_sub[w_sub["year"] == key_map["year"]]
+            else:
+                w_sub = sub
+            collapsed_data, collapsed_weights = self._collapse_weighted_adm2_to_atn(
+                sub, w_sub, weight_column, aggregator, agg_kwargs
+            )
+            if weight_column in collapsed_data.columns:
+                collapsed_data = collapsed_data.drop(columns=[weight_column])
+            collapsed_data = collapsed_data.merge(collapsed_weights, on="adm2_code", how="left")
+            frames.append(collapsed_data)
+        return pd.concat(frames, ignore_index=True) if frames else out
+
+    def _aggregate_adm1_weighted(
+        self, out, years, types, codes, adm2_type, weight_type, weight_column,
+        aggregator, agg_kwargs
+    ):
+        """Aggregate adm2 rows to adm1 using weighted aggregation."""
+        pool_adm2_type = "all" if adm2_type == "atn" else adm2_type
+        weight_pool = self._resolve_weight_pool(
+            out, years, codes, types, weight_type, weight_column, adm2_type=pool_adm2_type
+        )
+
+        group_keys = [c for c in ["year", "type"] if c in out.columns]
+        iterator = out.groupby(group_keys) if group_keys else [((), out)]
+        frames = []
+        for key, sub in iterator:
+            key_vals = key if isinstance(key, tuple) else (key,)
+            key_map = dict(zip(group_keys, key_vals))
+
+            if weight_pool is not None:
+                w_sub = weight_pool
+                if "year" in key_map and "year" in w_sub.columns:
+                    w_sub = w_sub[w_sub["year"] == key_map["year"]]
+                if adm2_type == "atn":
+                    sub_data, weight_values = self._collapse_weighted_adm2_to_atn(
+                        sub, w_sub, weight_column, aggregator, agg_kwargs
+                    )
+                else:
+                    sub_data = sub
+                    weight_values = w_sub[["adm2_code", weight_column]].copy()
+            else:
+                if weight_column not in sub.columns:
+                    raise KeyError(f"Weight column '{weight_column}' was not found in the data.")
+                if adm2_type == "atn":
+                    sub_data, weight_values = self._collapse_weighted_adm2_to_atn(
+                        sub, sub, weight_column, aggregator, agg_kwargs
+                    )
+                else:
+                    sub_data = sub
+                    weight_values = sub[["adm2_code", weight_column]].copy()
+
+            weight_values = weight_values.rename(columns={weight_column: "_aggregation_weight"})
+            sub_data = sub_data.drop(columns=[weight_column], errors="ignore")
+            sub_data = sub_data.merge(weight_values, on="adm2_code", how="left")
+
+            group_cols = [c for c in ["year", "type", "adm1", "adm1_code"] if c in sub_data.columns]
+            value_cols = [
+                c for c in sub_data.columns
+                if c not in group_cols and c not in ("adm2", "adm2_code", "_aggregation_weight")
+            ]
+
+            rows = []
+            for gkey, g in sub_data.groupby(group_cols):
+                gkey_vals = gkey if isinstance(gkey, tuple) else (gkey,)
+                w = g["_aggregation_weight"].to_numpy()
+                row = dict(zip(group_cols, gkey_vals))
+                for col in value_cols:
+                    row[col] = self._call_weighted_aggregator(
+                        aggregator, g[col].to_numpy(), w, agg_kwargs
+                    )
+                row[weight_column] = np.nansum(w)
+                rows.append(row)
+            frames.append(pd.DataFrame(rows))
+
+        return pd.concat(frames, ignore_index=True) if frames else out
 
 
     def create_crosswalkboundary(self, year1: int, year2: int):

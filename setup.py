@@ -12,7 +12,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="pycensuskr",
-    version="0.2.8",
+    version="0.2.9",
     author="Insang Song",
     author_email="geoissong@gmail.com",
     description="A Python package for Korean census data processing",
