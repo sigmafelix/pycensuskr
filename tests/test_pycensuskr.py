@@ -12,13 +12,13 @@ def test_version():
     """Test that version is defined and is a string."""
     assert __version__
     assert isinstance(__version__, str)
-    assert __version__ == "0.2.8"
+    assert __version__ == "0.3.0"
 
 
 def test_get_version():
     """Test the get_version function."""
     version = __version__
-    assert version == "0.2.8"
+    assert version == "0.3.0"
 
 
 class TestCensusData:

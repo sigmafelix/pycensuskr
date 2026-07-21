@@ -19,7 +19,7 @@ class CensusKR:
     the Python equivalent of the tidycensuskr R package functionality.
 
     The class works with bundled census data which is limited to certain quintennial
-    years (2010, 2015, and 2020). The bundled data includes 54K+ rows and 10 columns
+    years (2010, 2015, and 2020). The bundled data includes 155K+ rows and 12 columns
     covering various census types including population, housing, tax, mortality,
     economy, medicine, migration, and environment data.
 
@@ -30,7 +30,7 @@ class CensusKR:
 
     Methods:
         load_data(year): Load census data for a specific year.
-        load_districts(year): Load district boundaries for a specific year.
+        load_districts(year, level): Load district boundaries for a specific year.
         convert_basic_adm2(gdf): Convert level 2 boundaries to basic local government boundaries.
         anycensus(year, codes, type, level, aggregator, **agg_kwargs): Query census data
             by admin code and year.
@@ -39,7 +39,10 @@ class CensusKR:
         unify_boundaries(year_standard): Unify census boundaries to a standard year.
 
     Notes:
-        - Administrative levels: "adm1" (province-level), "adm2" (municipal-level)
+        - Administrative levels: "adm1" (province-level), "adm2" (municipal-level),
+          "adm3" (sub-district/dong-level, boundaries available for all bundled
+          years but census data only has adm3 granularity for 2020, and only for
+          the "population", "housing", "economy", and "mortality" types)
         - Available data types: "population", "housing", "tax", "mortality", "economy",
           "medicine", "migration", "environment"
         - Supported years: 2010, 2015, 2020
@@ -102,7 +105,7 @@ class CensusKR:
         dfe = df.loc[df['year'].isin(years)].copy()
         return dfe
     
-    def load_districts(self, year: int) -> gpd.GeoDataFrame:
+    def load_districts(self, year: int, level: str = "adm2") -> gpd.GeoDataFrame:
         """
         Load district boundaries for a specific year.
 
@@ -114,6 +117,9 @@ class CensusKR:
         Parameters:
             year (int): The year for which to load district boundaries.
                 Must be one of 2010, 2015, or 2020.
+            level (str, optional): Administrative level to load. "adm2" for
+                municipal-level or "adm3" for sub-district (dong/myeon/eup)
+                level boundaries. Defaults to "adm2".
 
         Returns:
             gpd.GeoDataFrame: A GeoDataFrame containing district boundaries
@@ -121,16 +127,21 @@ class CensusKR:
                 codes and names.
 
         Raises:
-            ValueError: If the specified year is not available.
+            ValueError: If level is not 'adm2' or 'adm3'.
             FileNotFoundError: If the boundaries data file is not found.
 
         Notes:
             - Returns adm2 (municipal-level) boundaries by default
+            - adm3 boundaries carry adm3_code and adm3_name_kr instead of a
+              year column, since each year has its own gpkg layer
             - Boundaries are stored in GeoPackage format with separate layers per year
             - Each boundary includes administrative codes, names, and geometry
             - Compatible with spatial operations and mapping libraries
         """
-        name_lyr = f"adm2_{year}"
+        if level not in ("adm2", "adm3"):
+            raise ValueError("level must be 'adm2' or 'adm3'")
+
+        name_lyr = f"{level}_{year}"
 
         location = os.path.dirname(os.path.realpath(__file__))
         path_bound = os.path.join(location, "data", "boundaries.gpkg")
@@ -202,8 +213,13 @@ class CensusKR:
                 \"migration\", \"environment\", or \"mortality\". Accepts a single
                 string or a list/tuple of strings to query multiple types at once.
                 Defaults to \"population\".
-            level (str, optional): Administrative level. \"adm1\" for province-level or
-                \"adm2\" for municipal-level. Defaults to \"adm2\".
+            level (str, optional): Administrative level. \"adm1\" for province-level,
+                \"adm2\" for municipal-level, or \"adm3\" for sub-district
+                (dong/myeon/eup) level. adm3-level census data is only available
+                where the bundled data has adm3 granularity (currently 2020 only,
+                for the \"population\", \"housing\", \"economy\", and \"mortality\"
+                types); other type/year combinations return no rows at
+                level=\"adm3\". Defaults to \"adm2\".
             adm2_type (str, optional): Which municipal code type to keep before
                 returning adm2 results or aggregating to adm1. \"all\" keeps the
                 data as queried, \"atn\" keeps autonomous/basic local government
@@ -294,8 +310,8 @@ class CensusKR:
             >>> data = census.anycensus(codes=[11], type=["population", "housing"])
         """
 
-        if level not in ("adm2", "adm1"):
-            raise ValueError("level must be 'adm2' or 'adm1'")
+        if level not in ("adm2", "adm1", "adm3"):
+            raise ValueError("level must be 'adm2', 'adm1', or 'adm3'")
 
         if adm2_type not in ("all", "atn", "non"):
             raise ValueError("adm2_type must be 'all', 'atn', or 'non'")
@@ -310,6 +326,8 @@ class CensusKR:
         has_weighting = weight_type is not None or weight_column is not None
         if level == "adm2" and has_weighting and adm2_type != "atn":
             raise ValueError("Weighted adm2 computation is only available when adm2_type='atn'.")
+        if level == "adm3" and has_weighting:
+            raise ValueError("Weighted aggregation is not supported for level='adm3'.")
         if has_weighting and weight_column is None:
             if weight_type == "population":
                 weight_column = "all households_total_per"
@@ -380,6 +398,26 @@ class CensusKR:
                     else:
                         codes = matched_adm1
                         query_col = "adm1"
+                # If codes are names and level is adm3, try adm1 then adm2 names before
+                # falling back to matching adm3 (dong-level) names directly
+                elif not is_int_code and level == "adm3":
+                    def strip_space(s): return re.sub(r"\s+", "", str(s))
+                    patt = re.compile(r"^(%s)" % "|".join(re.escape(c) for c in codes))
+                    matched_adm1 = []
+                    if "adm1" in df_year_type.columns:
+                        mask_adm1 = df_year_type["adm1"].map(strip_space).str.match(patt)
+                        matched_adm1 = df_year_type.loc[mask_adm1, "adm1"].dropna().unique().tolist()
+                    matched_adm2 = []
+                    if not matched_adm1 and "adm2" in df_year_type.columns:
+                        mask_adm2 = df_year_type["adm2"].map(strip_space).str.match(patt)
+                        matched_adm2 = df_year_type.loc[mask_adm2, "adm2"].dropna().unique().tolist()
+                    if matched_adm1:
+                        codes = matched_adm1
+                        query_col = "adm1"
+                    elif matched_adm2:
+                        codes = matched_adm2
+                        query_col = "adm2"
+                    # else: keep codes/query_col as-is to match adm3 (dong) names directly
         else:
             raise ValueError("'codes' must be a list of integers or strings.")
 
@@ -389,6 +427,12 @@ class CensusKR:
         left = df_year_type[query_col].map(strip_space).str.match(patt) if patt else pd.Series(False, index=df_year_type.index)
         right = df_year_type[query_col].astype(str).isin(codes) if codes else pd.Series(False, index=df_year_type.index)
         dfe = df_year_type[left | right].copy()
+
+        # For level="adm3", a name query may have matched via the adm1/adm2 column
+        # (see cascading match above), which would otherwise let in rows that lack
+        # adm3 granularity. Restrict to rows that actually have adm3 data.
+        if level == "adm3" and "adm3_code" in dfe.columns:
+            dfe = dfe[dfe["adm3_code"].notna()]
 
         # Abbreviate 'unit' to minlength=3
         if "unit" in dfe.columns:
@@ -403,6 +447,8 @@ class CensusKR:
                 dfe["unit"].astype(str)
             )
             index_cols = [c for c in ["year", "type", "adm1", "adm1_code", "adm2", "adm2_code"] if c in dfe.columns]
+            if level == "adm3":
+                index_cols += [c for c in ["adm3", "adm3_code"] if c in dfe.columns]
             # Collapses raw duplicate (year, type, adm1, adm2, class1, class2, unit) rows,
             # which do occur in the bundled data. Always sums rather than reusing the
             # user-supplied 'aggregator', since that may require a 'weights' kwarg meant
@@ -453,8 +499,9 @@ class CensusKR:
             geo_merge_col = f"{level}_code"
             frames = []
             districts = None
+            districts_level = level if level == "adm3" else "adm2"
             for yr in years:
-                districts = self.load_districts(yr)
+                districts = self.load_districts(yr, level=districts_level)
                 if geo_merge_col not in districts.columns:
                     raise KeyError(f"Column '{geo_merge_col}' not found in district boundaries.")
                 out_yr = out[out["year"] == yr] if "year" in out.columns else out

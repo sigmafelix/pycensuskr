@@ -75,9 +75,26 @@ pop20 = census.anycensus(year=2020, type="population")
 pop20_nonauto = census.detect_adm2_type(df=pop20, mode="non")
 ```
 
+## Load 2020 adm3-level data
+- From version 0.3.0, users can load adm3 (_Eup/Myeon/Dong_) level data and boundaries. To note, adm3 level data is currently available for population, housing, mortality, and economy `type`s in 2020.
+
+```python
+from pycensuskr import CensusKR
+
+# Create a CensusData instance
+census = CensusKR()
+
+# load population data
+pop20_adm3 = census.anycensus(year = 2020, type = "population", level = "adm3")
+
+# load housing data
+housing20_adm3 = census.anycensus(year = 2020, type = "housing", level = "adm3")
+
+```
+
 
 ## Notes on data updates
-Our data cleaning and processing pipeline is based on the original R package `tidycensuskr`. We periodically synchronize the bundled datasets used in this package with those in R `tidycensuskr` and `tidycensussfkr` to ensure accuracy and relevance. Please refer to the [tidycensuskr webpage](https://github.com/sigmafelix/tidycensuskr) for details on the latest data updates and changes.
+Our data cleaning and processing pipeline is based on the original R package `tidycensuskr`. We periodically synchronize the bundled datasets used in this package with those in R `tidycensuskr` and `tidycensuskr.sf` to ensure accuracy and relevance. Please refer to the [tidycensuskr webpage](https://github.com/sigmafelix/tidycensuskr) for details on the latest data updates and changes.
 
 ## Data license disclaimer
 
