@@ -75,8 +75,8 @@ pop20 = census.anycensus(year=2020, type="population")
 pop20_nonauto = census.detect_adm2_type(df=pop20, mode="non")
 ```
 
-## Load 2020 adm3-level data
-- From version 0.3.0, users can load adm3 (_Eup/Myeon/Dong_) level data and boundaries. To note, adm3 level data is currently available for population, housing, mortality, and economy `type`s in 2020.
+## Load adm3-level data
+- ADM3 (_Eup/Myeon/Dong_) boundaries are available for 2010, 2015, and 2020. ADM3 population and housing data is available for 2015, 2020, and 2025; economy and mortality ADM3 data is available for 2020.
 
 ```python
 from pycensuskr import CensusKR
@@ -89,6 +89,9 @@ pop20_adm3 = census.anycensus(year = 2020, type = "population", level = "adm3")
 
 # load housing data
 housing20_adm3 = census.anycensus(year = 2020, type = "housing", level = "adm3")
+
+# load 2025 neighborhood-level housing data (tabular; no 2025 boundaries are bundled)
+housing25_adm3 = census.anycensus(year = 2025, type = "housing", level = "adm3")
 
 ```
 
