@@ -18,10 +18,9 @@ class CensusKR:
     (province or municipality) and year, and to manage district boundaries. It is
     the Python equivalent of the tidycensuskr R package functionality.
 
-    The class works with bundled census data which is limited to certain quintennial
-    years (2010, 2015, and 2020). The bundled data includes 155K+ rows and 12 columns
-    covering various census types including population, housing, tax, mortality,
-    economy, medicine, migration, and environment data.
+    The bundled dataset has 836K+ rows and 12 columns. Its main census years are
+    2010, 2015, and 2020, with additional ADM3-level household and housing data
+    for 2015, 2020, and 2025.
 
     Attributes:
         gdf (gpd.GeoDataFrame): GeoDataFrame for spatial data.
@@ -40,12 +39,13 @@ class CensusKR:
 
     Notes:
         - Administrative levels: "adm1" (province-level), "adm2" (municipal-level),
-          "adm3" (sub-district/dong-level, boundaries available for all bundled
-          years but census data only has adm3 granularity for 2020, and only for
-          the "population", "housing", "economy", and "mortality" types)
+          and "adm3" (sub-district/dong-level; boundaries are available for 2010,
+          2015, and 2020)
+        - ADM3 census data covers population and housing in 2015, 2020, and 2025;
+          economy and mortality ADM3 data is available for 2020
         - Available data types: "population", "housing", "tax", "mortality", "economy",
           "medicine", "migration", "environment"
-        - Supported years: 2010, 2015, 2020
+        - Census years: 2010, 2015, and 2020, plus ADM3 household and housing data in 2025
         - Data is returned in wide format with separate columns for each class1,
           class2, and unit combination
     """
@@ -81,7 +81,8 @@ class CensusKR:
 
         Parameters:
             year (int or list): Census year(s) to load. Each must be one of
-                2010, 2015, or 2020. A single int or a list/tuple of ints.
+                2010, 2015, 2020, or 2025. Coverage for 2025 is limited to
+                ADM3-level household and housing data. A single int or a list/tuple of ints.
 
         Returns:
             pd.DataFrame: A DataFrame containing census data for the specified
@@ -197,13 +198,14 @@ class CensusKR:
         codes (if provided) and returns data in wide format. It is the Python equivalent
         of the anycensus() function in the tidycensuskr R package.
 
-        The method queries bundled census data which is limited to certain quintennial
-        years (2010, 2015, and 2020). The bundled data includes 54K+ rows and 10 columns
-        covering various demographic, economic, and social indicators.
+        The method queries the bundled 12-column census dataset. It covers 2010,
+        2015, and 2020, with additional ADM3-level household and housing records
+        for 2015, 2020, and 2025.
 
         Parameters:
             year (int or list, optional): Census year(s) to query. Each one of
-                2010, 2015, or 2020. Accepts a single int or a list/tuple of ints
+                2010, 2015, 2020, or 2025. Coverage varies by type, year, and
+                geographic level. Accepts a single int or a list/tuple of ints
                 to query multiple years at once. Defaults to 2020.
             codes (list, optional): Integer list of admin codes (e.g. [11, 26])
                 or character administrative area names (e.g. [\"Seoul\", \"Daejeon\"]).
@@ -216,10 +218,11 @@ class CensusKR:
             level (str, optional): Administrative level. \"adm1\" for province-level,
                 \"adm2\" for municipal-level, or \"adm3\" for sub-district
                 (dong/myeon/eup) level. adm3-level census data is only available
-                where the bundled data has adm3 granularity (currently 2020 only,
-                for the \"population\", \"housing\", \"economy\", and \"mortality\"
-                types); other type/year combinations return no rows at
-                level=\"adm3\". Defaults to \"adm2\".
+                where the bundled data has adm3 granularity. Population and
+                housing are available at adm3 level for 2015, 2020, and 2025;
+                economy and mortality are available at adm3 level for 2020.
+                Other type/year combinations return no rows at level=\"adm3\".
+                Defaults to \"adm2\".
             adm2_type (str, optional): Which municipal code type to keep before
                 returning adm2 results or aggregating to adm1. \"all\" keeps the
                 data as queried, \"atn\" keeps autonomous/basic local government
@@ -243,7 +246,8 @@ class CensusKR:
                 aggregating. If weight_type=\"population\" and weight_column is
                 omitted, \"all households_total_per\" is used. Defaults to None.
             geometry (bool, optional): Whether to include spatial geometry data in the
-                result. If True, returns a GeoDataFrame. Defaults to False.
+                result. If True, returns a GeoDataFrame. Boundaries are available for
+                2010, 2015, and 2020; 2025 census rows are tabular only. Defaults to False.
             **agg_kwargs: Additional arguments passed to the aggregator function
                 (e.g., when using custom aggregation functions).
 
@@ -255,7 +259,8 @@ class CensusKR:
         Raises:
             ValueError: If level is not 'adm1' or 'adm2', if adm2_type is not 'all',
                 'atn', or 'non', if mixed types are provided in codes, if weighted
-                adm2-level computation is requested without adm2_type='atn', or if
+                adm2-level computation is requested without adm2_type='atn', if
+                geometry is requested for a year without bundled boundaries, or if
                 data loading fails.
             KeyError: If required columns (including the weight column) are missing
                 from the data.
@@ -271,6 +276,8 @@ class CensusKR:
               is only available when adm2_type=\"atn\"
             - Column names are cleaned and lowercased in the output
             - Units are abbreviated to minimum length of 3 characters
+            - ADM3 rows with a valid code but no mapped name are retained with
+              a missing value in the adm3 column
 
         Examples:
             Query mortality data for administrative code 21 (Busan):
@@ -308,6 +315,9 @@ class CensusKR:
 
             Query multiple census types at once:
             >>> data = census.anycensus(codes=[11], type=["population", "housing"])
+
+            Query the added 2025 neighborhood-level housing data:
+            >>> data = census.anycensus(year=2025, type="housing", level="adm3")
         """
 
         if level not in ("adm2", "adm1", "adm3"):
@@ -438,6 +448,12 @@ class CensusKR:
         if "unit" in dfe.columns:
             dfe["unit"] = dfe["unit"].astype(str).str.replace(r"\s+", " ", regex=True).str.strip().str[:3]
 
+        # Keep ADM3 rows with a valid code even when their name is unmapped;
+        # pandas pivot_table otherwise drops rows with a missing index value.
+        missing_adm3_name = "__censuskr_missing_adm3_name__"
+        if level == "adm3" and "adm3" in dfe.columns:
+            dfe["adm3"] = dfe["adm3"].fillna(missing_adm3_name)
+
         # Pivot wider: names from (class1, class2, unit), values from 'value'
         have_pivot_cols = {"class1", "class2", "unit"}.issubset(dfe.columns) and "value" in dfe.columns
         if have_pivot_cols:
@@ -461,6 +477,8 @@ class CensusKR:
             ).reset_index()
             # Clean column names
             out.columns = [str(c).lower().replace("_na", "") for c in out.columns]
+            if level == "adm3" and "adm3" in out.columns:
+                out["adm3"] = out["adm3"].replace(missing_adm3_name, np.nan)
         else:
             out = dfe
             out.columns = [str(c).lower().replace("_na", "") for c in out.columns]
@@ -496,6 +514,13 @@ class CensusKR:
 
         # Optionally merge geometry
         if geometry:
+            available_boundary_years = {2010, 2015, 2020}
+            missing_boundary_years = sorted(set(years) - available_boundary_years)
+            if missing_boundary_years:
+                raise ValueError(
+                    "Boundary geometry is available only for 2010, 2015, and 2020; "
+                    f"no geometry is bundled for requested year(s): {missing_boundary_years}."
+                )
             geo_merge_col = f"{level}_code"
             frames = []
             districts = None
