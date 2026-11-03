@@ -375,6 +375,9 @@ class CensusKR:
             else:
                 df_year_type = df_year_type[df_year_type["type"].isin(types)]
 
+        # Keep the caller's codes for weight queries; 'codes' is expanded below
+        requested_codes = codes
+
         # Determine if 'codes' are integers
         is_int_code = all(isinstance(c, (int, np.integer)) for c in (codes or []))
         try:
@@ -451,6 +454,9 @@ class CensusKR:
         # adm3 granularity. Restrict to rows that actually have adm3 data.
         if level == "adm3" and "adm3_code" in dfe.columns:
             dfe = dfe[dfe["adm3_code"].notna()]
+        # Conversely, adm1/adm2 queries must not sum ADM3 rows into their parents
+        elif "adm3_code" in dfe.columns:
+            dfe = dfe[dfe["adm3_code"].isna()]
 
         # Abbreviate 'unit' to minlength=3
         if "unit" in dfe.columns:
@@ -500,14 +506,14 @@ class CensusKR:
         # autonomous/basic local government parent using weighted aggregation
         if level == "adm2" and has_weighting:
             out = self._apply_weighted_adm2(
-                out, years, types, codes, weight_type, weight_column, aggregator, agg_kwargs
+                out, years, types, requested_codes, weight_type, weight_column, aggregator, agg_kwargs
             )
 
         # If level is adm1, aggregate adm2 to adm1
         if level == "adm1":
             if has_weighting:
                 out = self._aggregate_adm1_weighted(
-                    out, years, types, codes, adm2_type, weight_type, weight_column,
+                    out, years, types, requested_codes, adm2_type, weight_type, weight_column,
                     aggregator, agg_kwargs
                 )
             else:
@@ -549,6 +555,11 @@ class CensusKR:
             out = gpd.GeoDataFrame(out, geometry="geometry", crs=districts.crs)
 
         return out
+
+    @staticmethod
+    def _code_str(codes):
+        """Codes as strings without a float suffix (31011.0 -> "31011")."""
+        return codes.astype(str).str.replace(r"\.0$", "", regex=True)
 
     @staticmethod
     def _call_weighted_aggregator(aggregator, values, weights, agg_kwargs):
@@ -615,10 +626,10 @@ class CensusKR:
 
         atn_df = self.detect_adm2_type(df, mode="atn").reset_index(drop=True)
         atn_weight_df = self.detect_adm2_type(weight_df, mode="atn").reset_index(drop=True)
-        atn_df[adm2_code] = atn_df[adm2_code].astype(str)
-        atn_weight_df[adm2_code] = atn_weight_df[adm2_code].astype(str)
+        atn_df[adm2_code] = self._code_str(atn_df[adm2_code])
+        atn_weight_df[adm2_code] = self._code_str(atn_weight_df[adm2_code])
 
-        code_chr = df[adm2_code].astype(str)
+        code_chr = self._code_str(df[adm2_code])
         parent_code = code_chr.str[:4] + "0"
         nonauto = code_chr.str[-1] != "0"
         parent_has_atn = parent_code.isin(atn_df[adm2_code])
@@ -628,9 +639,9 @@ class CensusKR:
             return atn_df, atn_weight_df[[adm2_code, weight_column]].copy()
 
         weight_values = weight_df[[adm2_code, weight_column]].copy()
-        weight_values[adm2_code] = weight_values[adm2_code].astype(str)
+        weight_values[adm2_code] = self._code_str(weight_values[adm2_code])
         weight_values = weight_values.rename(columns={weight_column: "_aggregation_weight"})
-        nonauto_df[adm2_code] = nonauto_df[adm2_code].astype(str)
+        nonauto_df[adm2_code] = self._code_str(nonauto_df[adm2_code])
         nonauto_df = nonauto_df.merge(weight_values, on=adm2_code, how="left")
         nonauto_df["_parent_adm2_code"] = nonauto_df[adm2_code].str[:4] + "0"
 
@@ -645,7 +656,7 @@ class CensusKR:
                     aggregator, group[column].to_numpy(), w, agg_kwargs
                 )
 
-        weight_code_chr = weight_df[adm2_code].astype(str)
+        weight_code_chr = self._code_str(weight_df[adm2_code])
         weight_parent_code = weight_code_chr.str[:4] + "0"
         weight_nonauto = weight_code_chr.str[-1] != "0"
         weight_parent_has_atn = weight_parent_code.isin(atn_weight_df[adm2_code])
@@ -653,7 +664,7 @@ class CensusKR:
 
         collapsed_weights = atn_weight_df[[adm2_code, weight_column]].copy()
         if not nonauto_weight_df.empty:
-            nonauto_weight_df[adm2_code] = nonauto_weight_df[adm2_code].astype(str)
+            nonauto_weight_df[adm2_code] = self._code_str(nonauto_weight_df[adm2_code])
             nonauto_weight_df["_parent_adm2_code"] = nonauto_weight_df[adm2_code].str[:4] + "0"
             sums = nonauto_weight_df.groupby("_parent_adm2_code")[weight_column].sum(min_count=1)
             codes_str = collapsed_weights[adm2_code]
@@ -886,7 +897,7 @@ class CensusKR:
                 raise KeyError("Column 'year' not found in data.")
             dfe = dfe.loc[dfe["year"] == year].copy()
 
-        code_series = dfe[adm2_code].astype(str)
+        code_series = self._code_str(dfe[adm2_code])
         adm2_nonauto_flag = code_series.str[-1] != "0"
 
         if adm2_nonauto_flag.any():
@@ -895,7 +906,7 @@ class CensusKR:
             adm2_nonauto_upper_str = adm2_nonauto_upper + "0"
 
             adm2_auto = dfe.loc[code_series.isin(adm2_nonauto_upper_str)]
-            adm2_auto_upper = pd.Series(adm2_auto[adm2_code].astype(str).unique()).str[:4]
+            adm2_auto_upper = pd.Series(self._code_str(adm2_auto[adm2_code]).unique()).str[:4]
             adm2_auto_upper_str = adm2_auto_upper + "0"
 
             if mode == "atn":

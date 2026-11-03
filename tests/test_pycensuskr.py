@@ -5,6 +5,7 @@ Test suite for pycensuskr package.
 from pycensuskr import __version__
 from pycensuskr.pycensuskr import CensusKR
 import geopandas
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -75,6 +76,14 @@ class TestDetectAdm2Type:
         out = census.detect_adm2_type(df, mode="atn")
         assert set(out["adm2_code"]) == {"11110", "22220"}
 
+    def test_detect_adm2_type_atn_float_codes(self):
+        # adm2_code is float in the bundled data (e.g. 31011.0)
+        census = CensusKR()
+        df = pd.DataFrame({"adm2_code": [31010.0, 31011.0, 31012.0, 11010.0]})
+
+        out = census.detect_adm2_type(df, mode="atn")
+        assert set(out["adm2_code"]) == {31010.0, 11010.0}
+
     def test_detect_adm2_type_year_filter(self):
         census = CensusKR()
         df = pd.DataFrame(
@@ -102,3 +111,35 @@ class TestDetectAdm2Type:
 
         with pytest.raises(KeyError, match="adm2_code"):
             census.detect_adm2_type(df)
+
+
+class TestAnycensusWeighted:
+    def test_weight_type_query_with_default_codes(self):
+        # mortality adm2_code is float; default codes must not leak into the weight query
+        census = CensusKR()
+        out = census.anycensus(
+            2020, type="mortality", level="adm2", adm2_type="atn",
+            aggregator=lambda x, weights: np.average(x, weights=weights),
+            weight_type="population", weight_column="all households_total_per",
+        )
+        assert len(out) > 0
+        assert out["all households_total_per"].notna().all()
+
+    def test_adm2_query_excludes_adm3_rows(self):
+        # Jongno-gu all-cause mortality (2020) must not be summed with its dong rows
+        census = CensusKR()
+        out = census.anycensus(2020, codes=[11010], type="mortality", level="adm2")
+        assert out["all causes_total_per"].iloc[0] == pytest.approx(261.7)
+
+    def test_weighted_atn_recalculates_parent_from_children(self):
+        # Suwon-si (31010) mortality = population-weighted mean of its four gu
+        census = CensusKR()
+        out = census.anycensus(
+            2020, type="mortality", level="adm2", adm2_type="atn",
+            aggregator=lambda x, weights: np.average(x, weights=weights),
+            weight_type="population", weight_column="all households_total_per",
+        )
+        codes = pd.to_numeric(out["adm2_code"]).astype(int)
+        assert not codes.between(31011, 31019).any()
+        suwon = out.loc[codes == 31010, "all causes_total_per"].iloc[0]
+        assert suwon == pytest.approx(289.177, abs=0.001)

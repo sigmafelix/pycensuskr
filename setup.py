@@ -26,13 +26,11 @@ setup(
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.10",
     install_requires=[
         "numpy>=2.2.2",
         "pandas>=2.3.0",
@@ -41,7 +39,9 @@ setup(
         "arrow>=1.3.0",
         "matplotlib>=3.10.0",
         "pyarrow>=20.0.0",
-        "fastparquet>=2024.11.0"
+        "fastparquet>=2024.11.0",
+        "libpysal>=2.6.0",
+        "mapclassify>=2.5.0"
     ],
     extras_require={
         "dev": [
