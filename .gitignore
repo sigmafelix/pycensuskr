@@ -130,3 +130,14 @@ dmypy.json
 *~
 
 pycensuskr/data/*.csv
+!pycensuskr/data/sgg_marine_connections.csv
+!pycensuskr/data/summary.csv
+!pycensuskr/data/unrestored_reference_pairs.csv
+!pycensuskr/data/contacts_requiring_historical_review.csv
+!pycensuskr/data/connections_2010.csv
+!pycensuskr/data/connections_2015.csv
+!pycensuskr/data/connections_2020.csv
+!pycensuskr/data/connections_2025.csv
+!pycensuskr/data/repair_*.csv
+!pycensuskr/data/queen_adjacency_overrides.csv
+!pycensuskr/data/queen_overrides_2025.csv
