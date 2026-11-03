@@ -39,8 +39,7 @@ class CensusKR:
 
     Notes:
         - Administrative levels: "adm1" (province-level), "adm2" (municipal-level),
-          and "adm3" (sub-district/dong-level; boundaries are available for 2010,
-          2015, and 2020)
+          and "adm3" (sub-district/dong-level; boundaries are available through 2025)
         - ADM3 census data covers population and housing in 2015, 2020, and 2025;
           economy and mortality ADM3 data is available for 2020
         - Available data types: "population", "housing", "tax", "mortality", "economy",
@@ -117,21 +116,27 @@ class CensusKR:
 
         Parameters:
             year (int): The year for which to load district boundaries.
-                Must be one of 2010, 2015, or 2020.
+                For level="adm2", one of 2010, 2015, 2020, or 2025. The 2025
+                ADM2 boundary is dated 2025-06-30 (KOSTAT second quarter).
+                For level="adm3", one of 2010, 2015, 2020, or 2025.
             level (str, optional): Administrative level to load. "adm2" for
                 municipal-level or "adm3" for sub-district (dong/myeon/eup)
                 level boundaries. Defaults to "adm2".
 
         Returns:
-            gpd.GeoDataFrame: A GeoDataFrame containing district boundaries
-                for the specified year, including geometry and administrative
-                codes and names.
+            gpd.GeoDataFrame: A GeoDataFrame with the existing boundary layer
+                fields and geometry for the specified year and level.
 
         Raises:
-            ValueError: If level is not 'adm2' or 'adm3'.
+            ValueError: If the requested year is unavailable for the level, or
+                if level is not 'adm2' or 'adm3'.
             FileNotFoundError: If the boundaries data file is not found.
 
         Notes:
+            - All ADM2 years have validated, edge-matched, non-overlapping coverage.
+              2010/2015 repairs use same-year geometry; 2020 uses 2015 historical
+              evidence. 2025 contacts match the same-year unsimplified source.
+              Source holes, original fields and row order are retained.
             - Returns adm2 (municipal-level) boundaries by default
             - adm3 boundaries carry adm3_code and adm3_name_kr instead of a
               year column, since each year has its own gpkg layer
@@ -141,6 +146,9 @@ class CensusKR:
         """
         if level not in ("adm2", "adm3"):
             raise ValueError("level must be 'adm2' or 'adm3'")
+        supported_years = (2010, 2015, 2020, 2025)
+        if year not in supported_years:
+            raise ValueError(f"year must be one of {supported_years} for level='{level}'")
 
         name_lyr = f"{level}_{year}"
 

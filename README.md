@@ -76,7 +76,9 @@ pop20_nonauto = census.detect_adm2_type(df=pop20, mode="non")
 ```
 
 ## Load adm3-level data
-- ADM3 (_Eup/Myeon/Dong_) boundaries are available for 2010, 2015, and 2020. ADM3 population and housing data is available for 2015, 2020, and 2025; economy and mortality ADM3 data is available for 2020.
+- ADM3 (_Eup/Myeon/Dong_) boundaries are available through 2025. ADM3 population and housing data is available for 2015, 2020, and 2025; economy and mortality ADM3 data is available for 2020.
+
+ADM2 boundaries are available for 2010, 2015, 2020, and 2025. The 2025 ADM2 layer is based on KOSTAT's 2025 second-quarter boundary file, reference date **2025-06-30**.
 
 ```python
 from pycensuskr import CensusKR
@@ -118,3 +120,29 @@ pytest
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Supplemental spatial weights
+
+Binary NumPy arrays `w_mat_YYYY.npy` (Queen plus marine road bridges/subsea
+ tunnels open by December 31) and `w_mat_o_YYYY.npy` (Queen only) are bundled
+for 2010, 2015, 2020 and 2025. Load with `numpy.load(..., allow_pickle=False)`;
+the matching `*_order.json` gives the exact `adm2_code_order`. Always align
+observations by these codes; arrays have zero diagonals and are not row
+standardized. Shapes are 251, 252, 250 and 252 square, respectively.
+
+All four ADM2 GeoPackage layers use the validated tidycensuskr boundaries,
+with the original fields and row order retained. 2010/2015 overlapping faces
+were repaired using their own boundary networks; the 2020 repair uses 2015
+historical evidence and 2020 geometry. 2025 contacts match its same-year raw
+source. Source holes are retained without evidence for filling. Islands and
+unresolved historical contacts are
+recorded in the metadata and [connection inventory](pycensuskr/data/sgg_connection_list.md).
+See the executed [Moran's I example](examples/v06_spatial_weights_moran.ipynb)
+for code alignment, libpysal conversion, and a reproducible permutation test.
+Install its optional dependencies with `pip install libpysal esda nbformat nbclient ipykernel`.
+
+The 2025 weight arrays include the confirmed shared-vertex adjacency among
+Guro, Yeongdeungpo, Dongjak and Gwanak (all six pairs). Geometry is unchanged;
+`w_mat_o_2025` has 646 pairs and `w_mat_2025` has 664. The source geometric
+graph has 645 pairs; the documented correction adds Guro–Dongjak only.
+See `queen_adjacency_overrides.csv` and `queen_overrides_2025.csv` in package data.
