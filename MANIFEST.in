@@ -7,7 +7,7 @@ recursive-include tests *.py
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
 
-recursive-include pycensuskr/data *.parquet *.gpkg *.npy *.json *.csv *.md
+recursive-include pycensuskr/data *.parquet *.gpkg *.xz *.npy *.json *.csv *.md
 
 prune examples
 global-exclude *.ipynb

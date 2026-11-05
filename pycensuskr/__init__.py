@@ -2,7 +2,7 @@
 pycensuskr - A Python package for Korean census data processing
 """
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 __author__ = "Insang Song"
 __email__ = "geoissong@snu.ac.kr"
 

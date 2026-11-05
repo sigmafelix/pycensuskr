@@ -2,6 +2,9 @@ import pandas as pd
 import geopandas as gpd
 import os
 import re
+import lzma
+import shutil
+import tempfile
 import numpy as np
 import warnings
 """
@@ -18,7 +21,8 @@ class CensusKR:
     (province or municipality) and year, and to manage district boundaries. It is
     the Python equivalent of the tidycensuskr R package functionality.
 
-    The bundled dataset has 836K+ rows and 12 columns. Its main census years are
+    The bundled dataset has 836,707 rows (103,572 for ADM2 and 733,135 for
+    ADM3 data) and 12 columns. Its main census years are
     2010, 2015, and 2020, with additional ADM3-level household and housing data
     for 2015, 2020, and 2025.
 
@@ -140,7 +144,8 @@ class CensusKR:
             - Returns adm2 (municipal-level) boundaries by default
             - adm3 boundaries carry adm3_code and adm3_name_kr instead of a
               year column, since each year has its own gpkg layer
-            - Boundaries are stored in GeoPackage format with separate layers per year
+            - The compressed GeoPackage is unpacked temporarily for each call;
+              its layers, geometry and attributes are preserved
             - Each boundary includes administrative codes, names, and geometry
             - Compatible with spatial operations and mapping libraries
         """
@@ -153,9 +158,12 @@ class CensusKR:
         name_lyr = f"{level}_{year}"
 
         location = os.path.dirname(os.path.realpath(__file__))
-        path_bound = os.path.join(location, "data", "boundaries.gpkg")
-        districts = gpd.read_file(path_bound, layer = name_lyr)
-        return districts
+        archive = os.path.join(location, "data", "boundaries.gpkg.xz")
+        with tempfile.TemporaryDirectory(prefix="pycensuskr-") as temp_dir:
+            path_bound = os.path.join(temp_dir, "boundaries.gpkg")
+            with lzma.open(archive, "rb") as source, open(path_bound, "wb") as target:
+                shutil.copyfileobj(source, target)
+            return gpd.read_file(path_bound, layer=name_lyr)
     
     def convert_basic_adm2(self, gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """
@@ -231,14 +239,20 @@ class CensusKR:
                 economy and mortality are available at adm3 level for 2020.
                 Other type/year combinations return no rows at level=\"adm3\".
                 Defaults to \"adm2\".
-            adm2_type (str, optional): Which municipal code type to keep before
-                returning adm2 results or aggregating to adm1. \"all\" keeps the
-                data as queried, \"atn\" keeps autonomous/basic local government
-                rows, and \"non\" keeps non-autonomous rows where available. For
-                weighted aggregation with \"atn\", autonomous/basic local government
-                rate rows are recalculated from their non-autonomous component rows
-                using the supplied weights before being returned or aggregated to
-                adm1. Defaults to \"all\".
+            adm2_type (str, optional): Municipal level to return or aggregate.
+                For a city and its non-autonomous Gu with the same indicator,
+                "all" removes the source city count when Gu values are available,
+                but retains city and Gu rates; the city count is missing in a
+                mixed wide row. "atn" returns cities with available Gu counts
+                summed and the city rate retained. "non" returns Gu rows where
+                available. Incomplete Gu sums raise a warning. If a city rate is
+                missing, "atn" uses the Gu mean; supplied weights recalculate
+                city rates from the Gu. Rate units are per 100,000 population,
+                births per 1,000, births per woman, and percent. Other units are
+                treated as additive counts. Selecting a city code with "atn" or
+                "non" also selects its Gu. "all" retains both city and Gu rates;
+                choose the intended level and aggregator when aggregating rates.
+                Defaults to "all".
             aggregator (callable, optional): Function to aggregate values when
                 level = \"adm1\" or when weighted adm2_type=\"atn\" recalculates
                 autonomous/basic local government rows. Defaults to numpy.sum.
@@ -447,7 +461,12 @@ class CensusKR:
         patt = re.compile(r"^(%s)" % "|".join(re.escape(c) for c in codes)) if codes else None
         left = df_year_type[query_col].map(strip_space).str.match(patt) if patt else pd.Series(False, index=df_year_type.index)
         right = df_year_type[query_col].astype(str).isin(codes) if codes else pd.Series(False, index=df_year_type.index)
-        dfe = df_year_type[left | right].copy()
+        selected = left | right
+        if level == "adm2" and adm2_type in ("atn", "non"):
+            area_codes = self._code_str(df_year_type["adm2_code"])
+            city_prefixes = area_codes[selected & area_codes.str.endswith("0")].str[:4].unique()
+            selected |= area_codes.str[:4].isin(city_prefixes) & ~area_codes.str.endswith("0")
+        dfe = df_year_type[selected].copy()
 
         # For level="adm3", a name query may have matched via the adm1/adm2 column
         # (see cascading match above), which would otherwise let in rows that lack
@@ -457,6 +476,25 @@ class CensusKR:
         # Conversely, adm1/adm2 queries must not sum ADM3 rows into their parents
         elif "adm3_code" in dfe.columns:
             dfe = dfe[dfe["adm3_code"].isna()]
+
+        # In all mode, keep city rates while removing overlapping city counts.
+        excluded_count_columns = set()
+        if level != "adm3" and adm2_type == "all":
+            reference = df_year_type
+            if "adm3_code" in reference.columns:
+                reference = reference[reference["adm3_code"].isna()]
+            excluded = self._overlapping_city_counts(dfe, reference)
+            removed = dfe.loc[excluded]
+            excluded_count_columns = set(
+                (removed["class1"].astype(str) + "_" + removed["class2"].astype(str) + "_" +
+                 removed["unit"].astype(str).str.replace(r"\s+", " ", regex=True).str.strip().str[:3])
+                .str.lower().str.replace("_na", "", regex=False)
+            )
+            dfe = dfe.loc[~excluded].copy()
+
+        # Keep the full unit to tell rate columns from count columns after pivoting
+        if "unit" in dfe.columns:
+            dfe["_unit_full"] = dfe["unit"]
 
         # Abbreviate 'unit' to minlength=3
         if "unit" in dfe.columns:
@@ -483,30 +521,45 @@ class CensusKR:
             # which do occur in the bundled data. Always sums rather than reusing the
             # user-supplied 'aggregator', since that may require a 'weights' kwarg meant
             # for the level="adm1"/weighted adm2 aggregation stages below, not this reshape.
-            out = dfe.pivot_table(
-                index=index_cols,
-                columns="__colname__",
-                values="value",
-                aggfunc=np.sum,
-            ).reset_index()
+            # min_count=1 keeps omitted (NA) values as NA instead of turning them into 0.
+            out = (
+                dfe.groupby(index_cols + ["__colname__"])["value"]
+                .sum(min_count=1)
+                .unstack("__colname__")
+                .reset_index()
+            )
             # Clean column names
             out.columns = [str(c).lower().replace("_na", "") for c in out.columns]
+            rate_columns = {
+                str(c).lower().replace("_na", "")
+                for c in dfe.loc[dfe["_unit_full"].isin(self.RATE_UNITS), "__colname__"].unique()
+            }
             if level == "adm3" and "adm3" in out.columns:
                 out["adm3"] = out["adm3"].replace(missing_adm3_name, np.nan)
         else:
             out = dfe
             out.columns = [str(c).lower().replace("_na", "") for c in out.columns]
+            rate_columns = set()
 
-        # Non-weighted adm2_type filtering (weighted 'atn' is handled via
-        # weighted collapsing below, since it recalculates rather than drops rows)
-        if adm2_type == "non" or (adm2_type == "atn" and not has_weighting):
+        for column in excluded_count_columns.difference(out.columns):
+            out[column] = np.nan
+
+        # Gu codes of each city in the requested years, taken from all types
+        ref_gu = self._reference_gu(df) if adm2_type == "atn" else {}
+
+        # Non-weighted adm2_type handling (weighted 'atn' is resolved below,
+        # since rate variables are then recalculated with the supplied weights)
+        if adm2_type == "atn" and not has_weighting and "adm2_code" in out.columns and level != "adm3":
+            out = self._collapse_to_atn(out, ref_gu, rate_columns)
+        elif adm2_type == "non" or (adm2_type == "atn" and not has_weighting):
             out = self.detect_adm2_type(out, mode=adm2_type)
 
         # Weighted adm2-level recalculation: fold non-autonomous rows into their
         # autonomous/basic local government parent using weighted aggregation
         if level == "adm2" and has_weighting:
             out = self._apply_weighted_adm2(
-                out, years, types, requested_codes, weight_type, weight_column, aggregator, agg_kwargs
+                out, years, types, requested_codes, weight_type, weight_column, aggregator, agg_kwargs,
+                ref_gu, rate_columns
             )
 
         # If level is adm1, aggregate adm2 to adm1
@@ -514,7 +567,7 @@ class CensusKR:
             if has_weighting:
                 out = self._aggregate_adm1_weighted(
                     out, years, types, requested_codes, adm2_type, weight_type, weight_column,
-                    aggregator, agg_kwargs
+                    aggregator, agg_kwargs, ref_gu, rate_columns
                 )
             else:
                 cols_to_drop = [c for c in ["adm2", "adm2_code"] if c in out.columns]
@@ -556,10 +609,128 @@ class CensusKR:
 
         return out
 
+    # Units whose values are rates; every other unit is treated as an additive count
+    RATE_UNITS = {"per 100k population", "births per 1000", "births per woman", "percent"}
+
     @staticmethod
     def _code_str(codes):
         """Codes as strings without a float suffix (31011.0 -> "31011")."""
         return codes.astype(str).str.replace(r"\.0$", "", regex=True)
+
+    @staticmethod
+    def _overlapping_city_counts(df, reference):
+        """Mark city counts with an observed Gu value for the same indicator."""
+        keys = ["year", "type", "class1", "class2", "unit"]
+        ref_codes = CensusKR._code_str(reference["adm2_code"])
+        is_gu = ~ref_codes.str.endswith("0")
+        is_count = ~reference["unit"].isin(CensusKR.RATE_UNITS)
+        child_mask = is_gu & is_count & reference["value"].notna()
+        children = reference.loc[child_mask, keys].copy()
+        children["_parent"] = (ref_codes.loc[child_mask].str[:4] + "0").to_numpy()
+        child_keys = pd.MultiIndex.from_frame(children)
+
+        codes = CensusKR._code_str(df["adm2_code"])
+        candidates = df[keys].copy()
+        candidates["_parent"] = codes.to_numpy()
+        return (codes.str.endswith("0") & ~df["unit"].isin(CensusKR.RATE_UNITS)
+                & pd.MultiIndex.from_frame(candidates).isin(child_keys))
+
+    @staticmethod
+    def _reference_gu(df):
+        """Non-autonomous Gu codes of each (year, city code), taken from all types in ``df``."""
+        if "adm3_code" in df.columns:
+            df = df[df["adm3_code"].isna()]
+        df = df[df["adm2_code"].notna()]
+        codes = CensusKR._code_str(df["adm2_code"])
+        is_gu = codes.str[-1] != "0"
+        ref = {}
+        for year, code in zip(df.loc[is_gu, "year"], codes[is_gu]):
+            ref.setdefault((year, code[:4] + "0"), set()).add(code)
+        return ref
+
+    def _collapse_to_atn(self, df, ref_gu, rate_columns=(), weights=None,
+                         aggregator=None, agg_kwargs=None):
+        """
+        Return autonomous/basic local government rows of ``df``, resolving each
+        city with non-autonomous Gu variable by variable within a year and type.
+
+        - Count variables use the sum of the Gu when every Gu of that year
+          (``ref_gu``) has a value, since city rows can be missing, zero or
+          averaged. When some Gu values are unavailable, the partial Gu sum is
+          used with a warning.
+        - Rate variables (``rate_columns``) are recalculated from the Gu with
+          ``aggregator`` when ``weights`` (Gu code -> weight) are given.
+          Otherwise the city rate is kept, or the unweighted Gu mean is used
+          when the city rate is missing.
+
+        Values built from an incomplete set of Gu are reported in one warning.
+        """
+        keys = [c for c in ["year", "type"] if c in df.columns]
+        id_cols = keys + [c for c in ["adm1", "adm1_code", "adm2", "adm2_code"] if c in df.columns]
+        value_cols = [c for c in df.columns if c not in id_cols]
+        codes = self._code_str(df["adm2_code"])
+        parents = codes.str[:4] + "0"
+        is_gu = (codes != parents).to_numpy()
+
+        out = df.loc[~is_gu].copy()
+        city_index = dict(zip(zip(*[out[k] for k in keys], codes[~is_gu]), out.index))
+        gu_df = df.loc[is_gu].assign(_code=codes[is_gu].to_numpy(), _parent=parents[is_gu].to_numpy())
+        new_rows, partial = [], []
+
+        for gkey, g in gu_df.groupby(keys + ["_parent"], sort=False):
+            gkey = gkey if isinstance(gkey, tuple) else (gkey,)
+            year = gkey[keys.index("year")] if "year" in keys else None
+            expected = ref_gu.get((year, gkey[-1]), set(g["_code"]))
+            i = city_index.get(gkey)
+            if i is None:
+                # The city row is missing: start from its first Gu row
+                row = g.iloc[0][id_cols].copy()
+                row["adm2_code"] = (float(gkey[-1]) if pd.api.types.is_numeric_dtype(df["adm2_code"])
+                                    else gkey[-1])
+                # Gu names read "<gu> <city>", e.g. "Jangan-gu Suwon-si"
+                if "adm2" in row.index:
+                    row["adm2"] = str(row["adm2"]).split(" ", 1)[-1]
+                city = pd.Series(np.nan, index=value_cols)
+            else:
+                row, city = out.loc[i, id_cols], out.loc[i, value_cols]
+            w = None if weights is None else g["_code"].map(weights).to_numpy(dtype=float)
+
+            resolved = {}
+            for col in value_cols:
+                v = g[col].to_numpy(dtype=float)
+                ok = ~np.isnan(v)
+                if not ok.any():
+                    continue
+                complete = set(g["_code"][ok]) >= expected
+                if col in rate_columns:
+                    if w is not None:
+                        resolved[col] = self._call_weighted_aggregator(aggregator, v[ok], w[ok], agg_kwargs or {})
+                    elif pd.isna(city[col]):
+                        resolved[col] = v[ok].mean()
+                    else:
+                        continue
+                else:
+                    resolved[col] = v[ok].sum()
+                if not complete:
+                    partial.append(f"{year:.0f} {row.get('adm2', gkey[-1])}: {col}" if year is not None
+                                   else f"{row.get('adm2', gkey[-1])}: {col}")
+
+            if i is None:
+                new_rows.append({**row.to_dict(), **resolved})
+            else:
+                for col, value in resolved.items():
+                    out.at[i, col] = value
+
+        if partial:
+            warnings.warn(
+                f"adm2_type='atn' used an incomplete set of non-autonomous Gu for "
+                f"{len(partial)} value(s), e.g. {partial[0]}.",
+                UserWarning,
+                stacklevel=3,
+            )
+        if new_rows:
+            out = pd.concat([out, pd.DataFrame(new_rows)], ignore_index=True)
+        return out
 
     @staticmethod
     def _call_weighted_aggregator(aggregator, values, weights, agg_kwargs):
@@ -605,80 +776,40 @@ class CensusKR:
             )
         return pool
 
-    def _collapse_weighted_adm2_to_atn(self, df, weight_df, weight_column, aggregator, agg_kwargs):
+    def _collapse_weighted_adm2_to_atn(
+        self, df, weight_df, weight_column, aggregator, agg_kwargs, ref_gu, rate_columns
+    ):
         """
-        Recalculate autonomous/basic local government adm2 rows from their
-        non-autonomous component rows using weighted aggregation.
+        Weighted adm2_type="atn" collapse of ``df`` (see ``_collapse_to_atn``).
 
-        Rows whose adm2_code is already autonomous (or has no non-autonomous
-        children) are kept as-is. Rows whose adm2_code is non-autonomous and
-        whose parent (first 4 digits + "0") is present among the autonomous
-        rows are folded into that parent using ``aggregator(values, weights=w,
-        **agg_kwargs)`` for every value column, and the parent's weight column
-        is recomputed as the sum of the children's weights.
-
-        Returns a tuple of (collapsed data, collapsed weights) where the
-        latter is a two-column (adm2_code, weight_column) frame.
+        Rate columns are recalculated from the Gu with weights from
+        ``weight_df``; the weight column itself is resolved as a count.
+        Returns (collapsed data, collapsed weights) with string adm2 codes,
+        the latter being a two-column (adm2_code, weight_column) frame.
         """
-        adm2_code = "adm2_code"
-        exclude = {"year", "adm1", "adm1_code", "adm2", "adm2_code", "type", weight_column}
-        value_columns = [c for c in df.columns if c not in exclude]
-
-        atn_df = self.detect_adm2_type(df, mode="atn").reset_index(drop=True)
-        atn_weight_df = self.detect_adm2_type(weight_df, mode="atn").reset_index(drop=True)
-        atn_df[adm2_code] = self._code_str(atn_df[adm2_code])
-        atn_weight_df[adm2_code] = self._code_str(atn_weight_df[adm2_code])
-
-        code_chr = self._code_str(df[adm2_code])
-        parent_code = code_chr.str[:4] + "0"
-        nonauto = code_chr.str[-1] != "0"
-        parent_has_atn = parent_code.isin(atn_df[adm2_code])
-        nonauto_df = df.loc[(nonauto & parent_has_atn).to_numpy()].copy()
-
-        if nonauto_df.empty:
-            return atn_df, atn_weight_df[[adm2_code, weight_column]].copy()
-
-        weight_values = weight_df[[adm2_code, weight_column]].copy()
-        weight_values[adm2_code] = self._code_str(weight_values[adm2_code])
-        weight_values = weight_values.rename(columns={weight_column: "_aggregation_weight"})
-        nonauto_df[adm2_code] = self._code_str(nonauto_df[adm2_code])
-        nonauto_df = nonauto_df.merge(weight_values, on=adm2_code, how="left")
-        nonauto_df["_parent_adm2_code"] = nonauto_df[adm2_code].str[:4] + "0"
-
-        for parent, group in nonauto_df.groupby("_parent_adm2_code"):
-            idx = atn_df.index[atn_df[adm2_code] == parent]
-            if len(idx) == 0:
-                continue
-            i = idx[0]
-            w = group["_aggregation_weight"].to_numpy()
-            for column in value_columns:
-                atn_df.loc[i, column] = self._call_weighted_aggregator(
-                    aggregator, group[column].to_numpy(), w, agg_kwargs
-                )
-
-        weight_code_chr = self._code_str(weight_df[adm2_code])
-        weight_parent_code = weight_code_chr.str[:4] + "0"
-        weight_nonauto = weight_code_chr.str[-1] != "0"
-        weight_parent_has_atn = weight_parent_code.isin(atn_weight_df[adm2_code])
-        nonauto_weight_df = weight_df.loc[(weight_nonauto & weight_parent_has_atn).to_numpy()].copy()
-
-        collapsed_weights = atn_weight_df[[adm2_code, weight_column]].copy()
-        if not nonauto_weight_df.empty:
-            nonauto_weight_df[adm2_code] = self._code_str(nonauto_weight_df[adm2_code])
-            nonauto_weight_df["_parent_adm2_code"] = nonauto_weight_df[adm2_code].str[:4] + "0"
-            sums = nonauto_weight_df.groupby("_parent_adm2_code")[weight_column].sum(min_count=1)
-            codes_str = collapsed_weights[adm2_code]
-            mask = codes_str.isin(sums.index)
-            collapsed_weights.loc[mask, weight_column] = codes_str[mask].map(sums).to_numpy()
-
-        return atn_df, collapsed_weights
+        weights = pd.Series(
+            weight_df[weight_column].to_numpy(dtype=float),
+            index=self._code_str(weight_df["adm2_code"]).to_numpy(),
+        )
+        weights = weights[~weights.index.duplicated()]
+        data = self._collapse_to_atn(
+            df.drop(columns=[weight_column], errors="ignore"),
+            ref_gu, rate_columns, weights, aggregator, agg_kwargs,
+        )
+        id_cols = [c for c in ["year", "type", "adm1", "adm1_code", "adm2", "adm2_code"] if c in weight_df.columns]
+        collapsed_weights = self._collapse_to_atn(weight_df[id_cols + [weight_column]], ref_gu)
+        data["adm2_code"] = self._code_str(data["adm2_code"])
+        collapsed_weights["adm2_code"] = self._code_str(collapsed_weights["adm2_code"])
+        return data, collapsed_weights[["adm2_code", weight_column]]
 
     def _apply_weighted_adm2(
-        self, out, years, types, codes, weight_type, weight_column, aggregator, agg_kwargs
+        self, out, years, types, codes, weight_type, weight_column, aggregator, agg_kwargs,
+        ref_gu, rate_columns
     ):
         """Recalculate adm2_type='atn' rows for a weighted adm2-level query."""
+        weight_codes = self._code_str(out["adm2_code"]).unique().tolist() if codes else codes
         weight_pool = self._resolve_weight_pool(
-            out, years, codes, types, weight_type, weight_column, adm2_type="all"
+            out, years, weight_codes, types, weight_type, weight_column, adm2_type="all"
         )
 
         group_keys = [c for c in ["year", "type"] if c in out.columns]
@@ -694,7 +825,7 @@ class CensusKR:
             else:
                 w_sub = sub
             collapsed_data, collapsed_weights = self._collapse_weighted_adm2_to_atn(
-                sub, w_sub, weight_column, aggregator, agg_kwargs
+                sub, w_sub, weight_column, aggregator, agg_kwargs, ref_gu, rate_columns
             )
             if weight_column in collapsed_data.columns:
                 collapsed_data = collapsed_data.drop(columns=[weight_column])
@@ -704,7 +835,7 @@ class CensusKR:
 
     def _aggregate_adm1_weighted(
         self, out, years, types, codes, adm2_type, weight_type, weight_column,
-        aggregator, agg_kwargs
+        aggregator, agg_kwargs, ref_gu, rate_columns
     ):
         """Aggregate adm2 rows to adm1 using weighted aggregation."""
         pool_adm2_type = "all" if adm2_type == "atn" else adm2_type
@@ -725,7 +856,7 @@ class CensusKR:
                     w_sub = w_sub[w_sub["year"] == key_map["year"]]
                 if adm2_type == "atn":
                     sub_data, weight_values = self._collapse_weighted_adm2_to_atn(
-                        sub, w_sub, weight_column, aggregator, agg_kwargs
+                        sub, w_sub, weight_column, aggregator, agg_kwargs, ref_gu, rate_columns
                     )
                 else:
                     sub_data = sub
@@ -735,7 +866,7 @@ class CensusKR:
                     raise KeyError(f"Weight column '{weight_column}' was not found in the data.")
                 if adm2_type == "atn":
                     sub_data, weight_values = self._collapse_weighted_adm2_to_atn(
-                        sub, sub, weight_column, aggregator, agg_kwargs
+                        sub, sub, weight_column, aggregator, agg_kwargs, ref_gu, rate_columns
                     )
                 else:
                     sub_data = sub
@@ -755,10 +886,19 @@ class CensusKR:
             for gkey, g in sub_data.groupby(group_cols):
                 gkey_vals = gkey if isinstance(gkey, tuple) else (gkey,)
                 w = g["_aggregation_weight"].to_numpy()
+                codes = self._code_str(g["adm2_code"])
+                parents = codes.str[:4] + "0"
+                is_city = codes == parents
+                child_weights = parents[~is_city & pd.notna(w)]
+                missing_city_weight = (is_city & pd.isna(w) & parents.isin(child_weights)).to_numpy()
                 row = dict(zip(group_cols, gkey_vals))
                 for col in value_cols:
+                    keep = ~missing_city_weight
+                    if col not in rate_columns:
+                        child_values = parents[~is_city & g[col].notna()]
+                        keep &= ~(is_city & parents.isin(child_values)).to_numpy()
                     row[col] = self._call_weighted_aggregator(
-                        aggregator, g[col].to_numpy(), w, agg_kwargs
+                        aggregator, g[col].to_numpy()[keep], w[keep], agg_kwargs
                     )
                 row[weight_column] = np.nansum(w)
                 rows.append(row)
@@ -874,7 +1014,8 @@ class CensusKR:
 
         Parameters:
             df (pd.DataFrame): Input census table.
-            year (int | None): Optional year filter.
+            year (int | None): Optional year filter. If omitted and a year
+                column is present, codes are compared within each year.
             mode (str): "atn" for autonomous or "non" for non-autonomous.
             adm2_code (str): Column name containing adm2 codes.
 
@@ -898,28 +1039,29 @@ class CensusKR:
             dfe = dfe.loc[dfe["year"] == year].copy()
 
         code_series = self._code_str(dfe[adm2_code])
-        adm2_nonauto_flag = code_series.str[-1] != "0"
+        nonauto = code_series.str[-1] != "0"
+        if mode == "atn":
+            return dfe.loc[~nonauto].copy()
 
-        if adm2_nonauto_flag.any():
-            adm2_nonauto = pd.Series(code_series.loc[adm2_nonauto_flag].unique())
-            adm2_nonauto_upper = adm2_nonauto.str[:4]
-            adm2_nonauto_upper_str = adm2_nonauto_upper + "0"
-
-            adm2_auto = dfe.loc[code_series.isin(adm2_nonauto_upper_str)]
-            adm2_auto_upper = pd.Series(self._code_str(adm2_auto[adm2_code]).unique()).str[:4]
-            adm2_auto_upper_str = adm2_auto_upper + "0"
-
-            if mode == "atn":
-                return dfe.loc[~adm2_nonauto_flag].copy()
-
-            auto_nonauto_cond = adm2_nonauto_upper.isin(adm2_auto_upper)
-            if not auto_nonauto_cond.all():
+        # Parent codes only replace their component districts in the same year.
+        if "year" in dfe.columns:
+            year_groups, _ = pd.factorize(dfe["year"], sort=False, use_na_sentinel=False)
+            groups = (np.flatnonzero(year_groups == value) for value in np.unique(year_groups))
+        else:
+            groups = [np.arange(len(dfe))]
+        keep = np.ones(len(dfe), dtype=bool)
+        for positions in groups:
+            codes = code_series.iloc[positions]
+            group_nonauto = nonauto.iloc[positions]
+            parents = codes[group_nonauto].str[:4].unique()
+            parents = pd.Index(parents) + "0"
+            present_parents = parents[parents.isin(codes)]
+            if not parents.isin(present_parents).all():
                 warnings.warn(
                     "Inconsistent codes: Some non-autonomous Gu codes do not have "
                     "corresponding upper level administrative codes.",
                     UserWarning,
                     stacklevel=2,
                 )
-            return dfe.loc[~code_series.isin(adm2_auto_upper_str)].copy()
-
-        return dfe
+            keep[positions] = ~codes.isin(present_parents).to_numpy()
+        return dfe.iloc[keep].copy()
