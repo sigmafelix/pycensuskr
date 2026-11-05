@@ -147,15 +147,7 @@ All four ADM2 GeoPackage layers use the validated tidycensuskr boundaries,
 with the original fields and row order retained. 2010/2015 overlapping faces
 were repaired using their own boundary networks; the 2020 repair uses 2015
 historical evidence and 2020 geometry. 2025 contacts match its same-year raw
-source. Source holes are retained without evidence for filling. Islands and
-unresolved historical contacts are
-recorded in the metadata and [connection inventory](pycensuskr/data/sgg_connection_list.md).
+source. 
 See the executed [Moran's I example](examples/v06_spatial_weights_moran.ipynb)
 for code alignment, libpysal conversion, and a reproducible permutation test.
 Install its optional dependencies with `pip install libpysal esda nbformat nbclient ipykernel`.
-
-The 2025 weight arrays include the confirmed shared-vertex adjacency among
-Guro, Yeongdeungpo, Dongjak and Gwanak (all six pairs). Geometry is unchanged;
-`w_mat_o_2025` has 646 pairs and `w_mat_2025` has 664. The source geometric
-graph has 645 pairs; the documented correction adds Guro–Dongjak only.
-See `queen_adjacency_overrides.csv` and `queen_overrides_2025.csv` in package data.
