@@ -64,6 +64,15 @@ plt.show()
 ```
 
 ## Filter non-/autonomous district codes
+For overlapping city and district observations, `anycensus(adm2_type="all")`
+excludes the city count for each indicator with district values while retaining
+city and district rates. `"atn"` sums available district counts into the city
+and keeps its rate unless weights are supplied; `"non"` returns district rows.
+Incomplete district sums produce a warning.
+
+Parent and non-autonomous district codes are compared separately for each
+year when the input contains a `year` column.
+
 ```python
 from pycensuskr import CensusKR
 
@@ -129,6 +138,10 @@ for 2010, 2015, 2020 and 2025. Load with `numpy.load(..., allow_pickle=False)`;
 the matching `*_order.json` gives the exact `adm2_code_order`. Always align
 observations by these codes; arrays have zero diagonals and are not row
 standardized. Shapes are 251, 252, 250 and 252 square, respectively.
+
+The boundary GeoPackage is distributed as `pycensuskr/data/boundaries.gpkg.xz`.
+`load_districts()` unpacks it to a temporary directory for each call; to use the
+GeoPackage directly in other software, decompress the `.xz` file first.
 
 All four ADM2 GeoPackage layers use the validated tidycensuskr boundaries,
 with the original fields and row order retained. 2010/2015 overlapping faces

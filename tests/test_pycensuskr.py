@@ -13,13 +13,13 @@ def test_version():
     """Test that version is defined and is a string."""
     assert __version__
     assert isinstance(__version__, str)
-    assert __version__ == "0.4.1"
+    assert __version__ == "0.4.2"
 
 
 def test_get_version():
     """Test the get_version function."""
     version = __version__
-    assert version == "0.4.1"
+    assert version == "0.4.2"
 
 
 class TestCensusData:
@@ -143,3 +143,89 @@ class TestAnycensusWeighted:
         assert not codes.between(31011, 31019).any()
         suwon = out.loc[codes == 31010, "all causes_total_per"].iloc[0]
         assert suwon == pytest.approx(289.177, abs=0.001)
+
+
+class TestAtnMissingParents:
+    # medicine reports only the Gu of cities such as Suwon-si (31011-31014)
+    COL = "doctors_anesthesiology and pain medicine_per"
+
+    def test_atn_rebuilds_city_from_gu_rows(self):
+        census = CensusKR()
+        out = census.anycensus(2020, type="medicine", level="adm2", adm2_type="atn")
+        codes = pd.to_numeric(out["adm2_code"]).astype(int)
+        suwon = out.loc[codes == 31010]
+        assert len(suwon) == 1
+        assert suwon["adm2"].iloc[0] == "Suwon-si"
+        assert suwon[self.COL].iloc[0] == 16 + 11 + 45 + 44
+        assert not codes.between(31011, 31019).any()
+
+    def test_atn_adm1_keeps_gu_only_cities(self):
+        census = CensusKR()
+        atn = census.anycensus(2020, type="medicine", level="adm1", adm2_type="atn")
+        with pytest.warns(UserWarning, match="Inconsistent codes"):
+            non = census.anycensus(2020, type="medicine", level="adm1", adm2_type="non")
+        gyeonggi = lambda d: d.loc[d["adm1_code"] == 31, self.COL].iloc[0]
+        assert gyeonggi(atn) == gyeonggi(non) == 998
+
+    def test_weighted_atn_keeps_gu_only_cities(self):
+        census = CensusKR()
+        out = census.anycensus(
+            2020, type="medicine", level="adm2", adm2_type="atn",
+            aggregator=lambda x, weights: np.average(x, weights=weights),
+            weight_type="population",
+        )
+        assert (pd.to_numeric(out["adm2_code"]).astype(int) == 31010).any()
+
+
+class TestAdm2TypeMultiYear:
+    def test_non_keeps_city_after_gu_abolition(self):
+        # Bucheon-si (31050) abolished its Gu in 2016; 2010 Gu must not drop 2020
+        census = CensusKR()
+        out = census.anycensus([2010, 2020], type="population", adm2_type="non")
+        codes = pd.to_numeric(out["adm2_code"]).astype(int)
+        assert ((out["year"] == 2020) & (codes == 31050)).any()
+        assert not ((out["year"] == 2010) & (codes == 31050)).any()
+
+
+class TestAtnVariableRules:
+    """adm2_type='atn' resolves each city with Gu variable by variable."""
+
+    @staticmethod
+    def value(df, code, col):
+        return df.loc[pd.to_numeric(df["adm2_code"]).astype(int) == code, col].iloc[0]
+
+    def test_count_uses_gu_sum_when_city_row_is_averaged(self):
+        # landuse city rows hold the mean of their Gu (Suwon-si: 89 = 356 / 4)
+        census = CensusKR()
+        out = census.anycensus(2020, type="landuse", adm2_type="atn")
+        assert self.value(out, 31010, "park_neighborhood_parks_cou") == 356
+
+    def test_count_uses_gu_sum_when_city_row_is_zero(self):
+        # Bucheon-si 2015 medicine city row is all zeros
+        census = CensusKR()
+        out = census.anycensus(2015, type="medicine", adm2_type="atn")
+        assert self.value(out, 31050, "doctors_anesthesiology and pain medicine_per") == 48 + 19 + 2
+
+    def test_count_fills_variable_missing_from_city_row(self):
+        # Seongnam-si 2015: population only in its Gu, fertility rate in the city row
+        census = CensusKR()
+        out = census.anycensus(2015, type="population", adm2_type="atn")
+        assert self.value(out, 31020, "all households_total_per") == 918710
+        assert self.value(out, 31020, "fertility_total_bir") == pytest.approx(1.159)
+
+    def test_partial_gu_set_warns(self):
+        # Cheongju-si 2015 environment has 2 of its 4 Gu
+        census = CensusKR()
+        with pytest.warns(UserWarning, match="incomplete set of non-autonomous Gu"):
+            out = census.anycensus(2015, type="environment", adm2_type="atn")
+        assert self.value(out, 33040, "organic_matter_discharge_kg_") == 892
+
+    def test_weighted_query_sums_counts_and_recalculates_rates(self):
+        census = CensusKR()
+        out = census.anycensus(
+            2020, type="population", adm2_type="atn",
+            aggregator=lambda x, weights: np.average(x, weights=weights),
+            weight_type="population",
+        )
+        assert self.value(out, 31010, "all households_male_per") == 576792
+        assert self.value(out, 31010, "fertility_total_bir") == pytest.approx(0.787, abs=1e-3)
